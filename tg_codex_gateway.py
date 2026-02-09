@@ -104,10 +104,6 @@ def _append_log(path: str, text: str):
     f.write(text)
     f.write("\n")
 
-def _append_log_line(path: str, line: str):
-  """Append a single line to log file (no timestamp header)."""
-  with open(path, "a", encoding="utf-8", errors="replace") as f:
-    f.write(line + "\n")
 
 def _resolve_codex_path() -> str:
   # Try to find codex in PATH, fallback to known npm location (Windows).
@@ -140,8 +136,9 @@ async def _stop_typing_task(stop_event: asyncio.Event, task: asyncio.Task):
   except asyncio.CancelledError:
     pass
 
-async def _pump_stream(stream, prefix: str, log_path: str, mode: str, stop_event: asyncio.Event, collector: list):
-  """Pump lines from stream to console (if full mode) and log file."""
+async def _pump_stream(stream, prefix: str, log_path: str, mode: str, stop_event: asyncio.Event, collector: list, buf_size: int = 10):
+  """Pump lines from stream to console (if full mode) and log file (buffered)."""
+  buffer = []
   while not stop_event.is_set():
     try:
       line_b = await asyncio.wait_for(stream.readline(), timeout=0.5)
@@ -151,7 +148,11 @@ async def _pump_stream(stream, prefix: str, log_path: str, mode: str, stop_event
       collector.append(line)
       if mode == "full":
         print(f"{prefix}{line}")
-      _append_log_line(log_path, line)
+      buffer.append(line)
+      if len(buffer) >= buf_size:
+        with open(log_path, "a", encoding="utf-8", errors="replace") as f:
+          f.write("\n".join(buffer) + "\n")
+        buffer.clear()
     except asyncio.TimeoutError:
       continue
     except asyncio.CancelledError:
@@ -159,6 +160,10 @@ async def _pump_stream(stream, prefix: str, log_path: str, mode: str, stop_event
     except Exception as e:
       print(f"[WARN] Pump error: {e}")
       break
+  # Flush remaining buffer
+  if buffer:
+    with open(log_path, "a", encoding="utf-8", errors="replace") as f:
+      f.write("\n".join(buffer) + "\n")
 
 def _agent_cmd(agent: str, prompt: str, output_path: Optional[str]) -> List[str]:
   # Keep this small & explicit. You can extend later (claude, etc.).
