@@ -527,6 +527,11 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
+  
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+  
   mem = "on" if (_CURRENT_AGENT == "codex" and _CODEX_HAS_SESSION) else "off"
   await update.message.reply_text(f"current_agent = {_CURRENT_AGENT}\nresume_memory = {mem}")
 
@@ -629,6 +634,11 @@ Notes:
 
 async def cmd_console(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
+  
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+  
   await update.message.reply_text(f"console_mode = {_CONSOLE_MODE}")
 
 async def cmd_setconsole(update: Update, context: ContextTypes.DEFAULT_TYPE):
