@@ -31,8 +31,10 @@ DELIVER_FILE: exports\plot.png
 ### Optional helpful info (not required, but nice)
 If relevant, you may also include:
 - file size
-- hash (sha256)
 - short note about what the file is
+
+### What NOT to include
+When delivering files to the user (via DELIVER_FILE), **do not** include SHA256 hashes or other checksums in the accompanying text. Users practically never verify them, and it clutters the message.
 
 ### Notes
 - The agent is allowed to use full local capabilities (read/write/run) unless otherwise restricted by config.
