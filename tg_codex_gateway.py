@@ -69,7 +69,7 @@ _CURRENT_AGENT = "codex"
 
 # --- Session persistence for Codex exec resume --last ---
 _SESSION_DIR = os.path.join(os.getcwd(), "sessions")
-_CURRENT_SESSION_FILE = None  # Path to current active session file
+_CURRENT_SESSION_DIR = None  # Path to current active session directory
 
 def _ensure_session_dir():
   """Create sessions directory if it doesn't exist."""
@@ -78,56 +78,55 @@ def _ensure_session_dir():
   except Exception:
     pass
 
-def _get_latest_session_file() -> Optional[str]:
-  """Get the most recent session file path, or None if no sessions exist."""
+def _get_latest_session_dir() -> Optional[str]:
+  """Get the most recent session directory path, or None if no sessions exist."""
   try:
     if os.path.isdir(_SESSION_DIR):
-      files = [f for f in os.listdir(_SESSION_DIR) if f.startswith("codex_session_")]
-      if files:
-        # Sort by filename (timestamp) to get latest
-        files.sort()
-        return os.path.join(_SESSION_DIR, files[-1])
+      # List all session directories
+      dirs = [d for d in os.listdir(_SESSION_DIR) 
+              if d.startswith("session_") and os.path.isdir(os.path.join(_SESSION_DIR, d))]
+      if dirs:
+        # Sort by name (timestamp) to get latest
+        dirs.sort()
+        return os.path.join(_SESSION_DIR, dirs[-1])
   except Exception:
     pass
   return None
 
-def _create_new_session_file():
-  """Create a new session file (called by /reset or /new_session)."""
-  global _CURRENT_SESSION_FILE
+def _create_new_session_dir():
+  """Create a new session directory (called by /reset or /new_session)."""
+  global _CURRENT_SESSION_DIR
   try:
     _ensure_session_dir()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    _CURRENT_SESSION_FILE = os.path.join(_SESSION_DIR, f"codex_session_{timestamp}.txt")
-    with open(_CURRENT_SESSION_FILE, "w") as f:
+    session_name = f"session_{timestamp}"
+    _CURRENT_SESSION_DIR = os.path.join(_SESSION_DIR, session_name)
+    os.makedirs(_CURRENT_SESSION_DIR, exist_ok=True)
+    # Create metadata file
+    with open(os.path.join(_CURRENT_SESSION_DIR, "meta.txt"), "w") as f:
       f.write(f"Session started at {timestamp}\n")
-  except Exception:
-    _CURRENT_SESSION_FILE = None
+  except Exception as e:
+    print(f"[WARN] Failed to create session directory: {e}")
+    _CURRENT_SESSION_DIR = None
 
-def _append_to_session(note: str):
-  """Append a note to current session file."""
-  if _CURRENT_SESSION_FILE:
-    try:
-      with open(_CURRENT_SESSION_FILE, "a") as f:
-        f.write(f"{datetime.now().strftime('%Y%m%d_%H%M%S')}: {note}\n")
-    except Exception:
-      pass
+def _get_session_log_paths() -> Tuple[Optional[str], Optional[str]]:
+  """Get stdout and stderr log paths for current session."""
+  if _CURRENT_SESSION_DIR:
+    stdout_path = os.path.join(_CURRENT_SESSION_DIR, "stdout.log")
+    stderr_path = os.path.join(_CURRENT_SESSION_DIR, "stderr.log")
+    return stdout_path, stderr_path
+  return None, None
 
 # Ensure directory exists and load initial state
 _ensure_session_dir()
-_CURRENT_SESSION_FILE = _get_latest_session_file()
-_CODEX_HAS_SESSION = _CURRENT_SESSION_FILE is not None
+_CURRENT_SESSION_DIR = _get_latest_session_dir()
+_CODEX_HAS_SESSION = _CURRENT_SESSION_DIR is not None
 
 # --- Console output mode: "quiet" (default) or "full" ---
 _CONSOLE_MODE = "full"
 
 # --- File delivery settings ---
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB Telegram limit
-
-# --- Logging ---
-_LOG_STEM = os.path.join(os.getcwd(), "tg_codex_gateway")
-_STDERR_LOG = _LOG_STEM + "_stderr.log"
-_STDOUT_LOG = _LOG_STEM + "_stdout.log"
-
 def _is_allowed(update: Update) -> bool:
   chat = update.effective_chat
   return bool(chat) and chat.id == ALLOWED_CHAT_ID_INT
@@ -313,12 +312,23 @@ def _agent_cmd(agent: str, output_path: Optional[str]) -> List[str]:
   raise ValueError(f"Unknown agent: {agent}")
 
 async def _run_agent(update: Update, prompt: str):
-  global _CURRENT_AGENT, _CODEX_HAS_SESSION
+  global _CURRENT_AGENT, _CODEX_HAS_SESSION, _CURRENT_SESSION_DIR
 
   prompt = (prompt or "").strip()
   if not prompt:
     await update.message.reply_text("Empty prompt.")
     return
+
+  # Ensure we have a session directory (create if none exists)
+  if _CURRENT_SESSION_DIR is None:
+    _create_new_session_dir()
+
+  # Get session-specific log paths
+  session_stdout_path, session_stderr_path = _get_session_log_paths()
+  if not session_stdout_path or not session_stderr_path:
+    # Fallback to temp paths if session creation failed
+    session_stdout_path = os.path.join(os.getcwd(), "_temp_stdout.log")
+    session_stderr_path = os.path.join(os.getcwd(), "_temp_stderr.log")
 
   # A per-run output file for the "final assistant message"
   out_file = os.path.join(os.getcwd(), "_tg_last_message.txt")
@@ -329,7 +339,7 @@ async def _run_agent(update: Update, prompt: str):
     pass
 
   cmd = _agent_cmd(_CURRENT_AGENT, out_file)
-  print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} exec={cmd!r}")
+  print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} session={os.path.basename(_CURRENT_SESSION_DIR or 'none')} exec={cmd!r}")
 
   # Start typing indicator loop
   stop_typing = asyncio.Event()
@@ -349,9 +359,9 @@ async def _run_agent(update: Update, prompt: str):
       stderr=asyncio.subprocess.PIPE
     )
 
-    # Start pump tasks for streaming output
-    stdout_task = asyncio.create_task(_pump_stream(proc.stdout, "[codex:out] ", _STDOUT_LOG, _CONSOLE_MODE, stop_pump, stdout_lines))
-    stderr_task = asyncio.create_task(_pump_stream(proc.stderr, "[codex:err] ", _STDERR_LOG, _CONSOLE_MODE, stop_pump, stderr_lines))
+    # Start pump tasks for streaming output (session-specific logs)
+    stdout_task = asyncio.create_task(_pump_stream(proc.stdout, "[codex:out] ", session_stdout_path, _CONSOLE_MODE, stop_pump, stdout_lines))
+    stderr_task = asyncio.create_task(_pump_stream(proc.stderr, "[codex:err] ", session_stderr_path, _CONSOLE_MODE, stop_pump, stderr_lines))
 
     # Send prompt via stdin (supports multiline), then wait for process
     try:
@@ -397,7 +407,6 @@ async def _run_agent(update: Update, prompt: str):
   if _CURRENT_AGENT == "codex" and proc.returncode == 0:
     global _CODEX_HAS_SESSION
     _CODEX_HAS_SESSION = True
-    _append_to_session(f"Run successful, exit_code={proc.returncode}")
 
   # Prefer the "final assistant message" written by codex.
   final_msg = ""
@@ -476,7 +485,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   global _CODEX_HAS_SESSION
   _CODEX_HAS_SESSION = False
-  _create_new_session_file()
+  _create_new_session_dir()
   await update.message.reply_text("OK. New session started. Next run will be fresh (no resume).")
 
 async def cmd_loginstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -603,7 +612,7 @@ def main():
   print(f"[BOOT] Current agent = {_CURRENT_AGENT}")
   print(f"[BOOT] Console mode = {_CONSOLE_MODE} (use /setconsole to change)")
   print("[BOOT] Codex memory: ON after first successful run (uses `codex exec resume --last`).")
-  print(f"[BOOT] Logs: {_STDOUT_LOG} / {_STDERR_LOG}")
+  print(f"[BOOT] Session storage: {_SESSION_DIR}/")
 
   app = Application.builder().token(TOKEN).build()
 
