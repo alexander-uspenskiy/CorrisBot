@@ -41,8 +41,9 @@
 
 import os
 import asyncio
+import re
 import shutil
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from datetime import datetime
 
 from telegram import Update
@@ -70,6 +71,9 @@ _CODEX_HAS_SESSION = False
 
 # --- Console output mode: "quiet" (default) or "full" ---
 _CONSOLE_MODE = "full"
+
+# --- File delivery settings ---
+_MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB Telegram limit
 
 # --- Logging ---
 _LOG_STEM = os.path.join(os.getcwd(), "tg_codex_gateway")
@@ -164,6 +168,74 @@ async def _pump_stream(stream, prefix: str, log_path: str, mode: str, stop_event
   if buffer:
     with open(log_path, "a", encoding="utf-8", errors="replace") as f:
       f.write("\n".join(buffer) + "\n")
+
+def _extract_deliver_files(text: str) -> Tuple[str, List[str]]:
+  """
+  Extract DELIVER_FILE: directives from text.
+  Returns (clean_text, list_of_paths).
+  Directive format: DELIVER_FILE: <path> (on its own line, case-sensitive).
+  """
+  if not text:
+    return "", []
+  
+  paths = []
+  clean_lines = []
+  
+  # Pattern: DELIVER_FILE: followed by optional whitespace, then capture the path
+  pattern = re.compile(r'^DELIVER_FILE:\s*(.+)$')
+  
+  for line in text.splitlines():
+    match = pattern.match(line.strip())
+    if match:
+      paths.append(match.group(1).strip())
+    else:
+      clean_lines.append(line)
+  
+  # Remove trailing empty lines from clean_text
+  while clean_lines and clean_lines[-1].strip() == "":
+    clean_lines.pop()
+  
+  clean_text = "\n".join(clean_lines)
+  return clean_text, paths
+
+async def _deliver_files(update: Update, paths: List[str]):
+  """
+  Deliver files to Telegram chat.
+  Paths can be absolute or relative (resolved to WORKDIR).
+  """
+  for raw_path in paths:
+    # Resolve path
+    if os.path.isabs(raw_path):
+      file_path = raw_path
+    else:
+      file_path = os.path.join(os.getcwd(), raw_path)
+    
+    file_path = os.path.normpath(file_path)
+    basename = os.path.basename(file_path)
+    
+    # Check file exists
+    if not os.path.isfile(file_path):
+      await update.message.reply_text(f"File not found: {raw_path}")
+      continue
+    
+    # Check file size
+    try:
+      file_size = os.path.getsize(file_path)
+    except Exception as e:
+      await update.message.reply_text(f"Failed to check size: {raw_path} ({e})")
+      continue
+    
+    if file_size > _MAX_FILE_SIZE:
+      await update.message.reply_text(f"File too large: {raw_path} ({file_size} bytes)")
+      continue
+    
+    # Send file
+    try:
+      with open(file_path, "rb") as f:
+        await update.message.reply_document(document=f, filename=basename)
+      await update.message.reply_text(f"Sent: {basename} ({file_size} bytes)")
+    except Exception as e:
+      await update.message.reply_text(f"Failed to send: {raw_path} ({e})")
 
 def _agent_cmd(agent: str, prompt: str, output_path: Optional[str]) -> List[str]:
   # Keep this small & explicit. You can extend later (claude, etc.).
@@ -279,9 +351,14 @@ async def _run_agent(update: Update, prompt: str):
   except Exception:
     final_msg = ""
 
-  # 1) Send final message if present
+  # 1) Process final message: extract file delivery directives and send clean text
   if final_msg:
-    await update.message.reply_text(_clip(final_msg))
+    clean_text, file_paths = _extract_deliver_files(final_msg)
+    if clean_text:
+      await update.message.reply_text(_clip(clean_text))
+    # Deliver files if any directives found
+    if file_paths:
+      await _deliver_files(update, file_paths)
   else:
     # Fallback: if no out_file produced anything, use stdout (usually still cleaner than stderr)
     if stdout:
