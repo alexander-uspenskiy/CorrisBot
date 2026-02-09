@@ -69,7 +69,7 @@ _CURRENT_AGENT = "codex"
 _CODEX_HAS_SESSION = False
 
 # --- Console output mode: "quiet" (default) or "full" ---
-_CONSOLE_MODE = "quiet"
+_CONSOLE_MODE = "full"
 
 # --- Logging ---
 _LOG_STEM = os.path.join(os.getcwd(), "tg_codex_gateway")
