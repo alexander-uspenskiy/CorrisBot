@@ -25,6 +25,7 @@ ENV/
 _tg_last_message.txt
 sessions/
 prompts/
+CorrisBot.md
 
 # OS files
 .DS_Store
