@@ -229,16 +229,17 @@ async def _deliver_files(update: Update, paths: List[str]):
       await update.message.reply_text(f"File too large: {raw_path} ({file_size} bytes)")
       continue
     
-    # Send file
+    # Send file (with extended timeout for large files)
     try:
       with open(file_path, "rb") as f:
-        await update.message.reply_document(document=f, filename=basename)
+        await update.message.reply_document(document=f, filename=basename, read_timeout=600, write_timeout=600)
       await update.message.reply_text(f"Sent: {basename} ({file_size} bytes)")
     except Exception as e:
       await update.message.reply_text(f"Failed to send: {raw_path} ({e})")
 
-def _agent_cmd(agent: str, prompt: str, output_path: Optional[str]) -> List[str]:
+def _agent_cmd(agent: str, output_path: Optional[str]) -> List[str]:
   # Keep this small & explicit. You can extend later (claude, etc.).
+  # Note: prompt is passed via stdin, not as command-line argument (to support multiline).
   agent = (agent or "").strip().lower()
   if agent == "codex":
     codex_path = _resolve_codex_path()
@@ -254,10 +255,12 @@ def _agent_cmd(agent: str, prompt: str, output_path: Optional[str]) -> List[str]
     if _CODEX_HAS_SESSION:
       # Continue the last non-interactive session in this working directory.
       # Docs: codex exec resume --last "follow-up"
-      return base + ["resume", "--last", prompt]
+      # Note: "-" tells codex to read prompt from stdin
+      return base + ["resume", "--last", "-"]
 
     # First message starts a fresh non-interactive session.
-    return base + [prompt]
+    # Note: "-" tells codex to read prompt from stdin
+    return base + ["-"]
 
   raise ValueError(f"Unknown agent: {agent}")
 
@@ -277,7 +280,7 @@ async def _run_agent(update: Update, prompt: str):
   except Exception:
     pass
 
-  cmd = _agent_cmd(_CURRENT_AGENT, prompt, out_file)
+  cmd = _agent_cmd(_CURRENT_AGENT, out_file)
   print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} exec={cmd!r}")
 
   # Start typing indicator loop
@@ -293,6 +296,7 @@ async def _run_agent(update: Update, prompt: str):
   try:
     proc = await asyncio.create_subprocess_exec(
       *cmd,
+      stdin=asyncio.subprocess.PIPE,
       stdout=asyncio.subprocess.PIPE,
       stderr=asyncio.subprocess.PIPE
     )
@@ -301,9 +305,12 @@ async def _run_agent(update: Update, prompt: str):
     stdout_task = asyncio.create_task(_pump_stream(proc.stdout, "[codex:out] ", _STDOUT_LOG, _CONSOLE_MODE, stop_pump, stdout_lines))
     stderr_task = asyncio.create_task(_pump_stream(proc.stderr, "[codex:err] ", _STDERR_LOG, _CONSOLE_MODE, stop_pump, stderr_lines))
 
-    # Wait for process with timeout
+    # Send prompt via stdin (supports multiline), then wait for process
     try:
-      await asyncio.wait_for(proc.wait(), timeout=300)  # 5 minutes
+      proc.stdin.write(prompt.encode("utf-8"))
+      await proc.stdin.drain()
+      proc.stdin.close()
+      await asyncio.wait_for(proc.wait(), timeout=600)  # 10 minutes
     except asyncio.TimeoutError:
       proc.kill()
       stop_pump.set()
@@ -313,8 +320,8 @@ async def _run_agent(update: Update, prompt: str):
           await task
         except asyncio.CancelledError:
           pass
-      await update.message.reply_text("Timeout (300s). Killed.")
-      print("[RUN] timeout -> killed")
+      await update.message.reply_text("Timeout (600s). Killed.")
+      print("[RUN] timeout (600s) -> killed")
       return
 
     # Stop pump tasks
