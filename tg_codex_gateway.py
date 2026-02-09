@@ -28,7 +28,8 @@
 #   /agent              -> show current agent name + whether resume memory is on
 #   /setagent <name>    -> set current agent (supported: codex)
 #   /run <text>         -> explicitly run text via current agent (same as plain text)
-#   /reset              -> forget "resume --last" state (next message starts a fresh exec)
+#   /reset              -> start a fresh session (new file, no resume)
+#   /new_session        -> same as /reset
 #   /loginstatus        -> show Codex login status (only for codex agent)
 #   /console            -> show current console output mode
 #   /setconsole <mode>  -> set console mode: quiet (default) or full
@@ -66,8 +67,55 @@ except ValueError:
 # --- Agent selection (in-memory). Default is Codex CLI. ---
 _CURRENT_AGENT = "codex"
 
-# --- "Memory" flag for Codex exec resume --last ---
-_CODEX_HAS_SESSION = False
+# --- Session persistence for Codex exec resume --last ---
+_SESSION_DIR = os.path.join(os.getcwd(), "sessions")
+_CURRENT_SESSION_FILE = None  # Path to current active session file
+
+def _ensure_session_dir():
+  """Create sessions directory if it doesn't exist."""
+  try:
+    os.makedirs(_SESSION_DIR, exist_ok=True)
+  except Exception:
+    pass
+
+def _get_latest_session_file() -> Optional[str]:
+  """Get the most recent session file path, or None if no sessions exist."""
+  try:
+    if os.path.isdir(_SESSION_DIR):
+      files = [f for f in os.listdir(_SESSION_DIR) if f.startswith("codex_session_")]
+      if files:
+        # Sort by filename (timestamp) to get latest
+        files.sort()
+        return os.path.join(_SESSION_DIR, files[-1])
+  except Exception:
+    pass
+  return None
+
+def _create_new_session_file():
+  """Create a new session file (called by /reset or /new_session)."""
+  global _CURRENT_SESSION_FILE
+  try:
+    _ensure_session_dir()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _CURRENT_SESSION_FILE = os.path.join(_SESSION_DIR, f"codex_session_{timestamp}.txt")
+    with open(_CURRENT_SESSION_FILE, "w") as f:
+      f.write(f"Session started at {timestamp}\n")
+  except Exception:
+    _CURRENT_SESSION_FILE = None
+
+def _append_to_session(note: str):
+  """Append a note to current session file."""
+  if _CURRENT_SESSION_FILE:
+    try:
+      with open(_CURRENT_SESSION_FILE, "a") as f:
+        f.write(f"{datetime.now().strftime('%Y%m%d_%H%M%S')}: {note}\n")
+    except Exception:
+      pass
+
+# Ensure directory exists and load initial state
+_ensure_session_dir()
+_CURRENT_SESSION_FILE = _get_latest_session_file()
+_CODEX_HAS_SESSION = _CURRENT_SESSION_FILE is not None
 
 # --- Console output mode: "quiet" (default) or "full" ---
 _CONSOLE_MODE = "full"
@@ -347,7 +395,9 @@ async def _run_agent(update: Update, prompt: str):
 
   # If codex succeeded at least once, enable resume mode for future messages.
   if _CURRENT_AGENT == "codex" and proc.returncode == 0:
+    global _CODEX_HAS_SESSION
     _CODEX_HAS_SESSION = True
+    _append_to_session(f"Run successful, exit_code={proc.returncode}")
 
   # Prefer the "final assistant message" written by codex.
   final_msg = ""
@@ -417,6 +467,7 @@ async def cmd_setagent(update: Update, context: ContextTypes.DEFAULT_TYPE):
   await update.message.reply_text(f"OK. current_agent = {_CURRENT_AGENT}")
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Start a fresh session (synonym: /new_session)."""
   _echo_console(update)
 
   if not _is_allowed(update):
@@ -425,7 +476,8 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   global _CODEX_HAS_SESSION
   _CODEX_HAS_SESSION = False
-  await update.message.reply_text("OK. Next message will start a fresh Codex exec (no resume).")
+  _create_new_session_file()
+  await update.message.reply_text("OK. New session started. Next run will be fresh (no resume).")
 
 async def cmd_loginstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
@@ -476,7 +528,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /agent - show current agent and memory status
 /setagent <name> - set agent (supported: codex)
 /run <text> - run text via current agent
-/reset - reset session memory (start fresh)
+/reset - start a fresh session (no resume)
+/new_session - same as /reset
 /loginstatus - show Codex login status
 /console - show current console mode
 /setconsole quiet|full - set console output mode
@@ -559,6 +612,7 @@ def main():
   app.add_handler(CommandHandler("agent", cmd_agent))
   app.add_handler(CommandHandler("setagent", cmd_setagent))
   app.add_handler(CommandHandler("reset", cmd_reset))
+  app.add_handler(CommandHandler("new_session", cmd_reset))
   app.add_handler(CommandHandler("run", cmd_run))
   app.add_handler(CommandHandler("loginstatus", cmd_loginstatus))
   app.add_handler(CommandHandler("help", cmd_help))

@@ -23,6 +23,7 @@ ENV/
 
 # Gateway temporary files
 _tg_last_message.txt
+sessions/
 
 # OS files
 .DS_Store
