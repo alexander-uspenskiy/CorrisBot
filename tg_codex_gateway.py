@@ -29,6 +29,8 @@
 #   /setagent <name>    -> set current agent (supported: codex)
 #   /run <text>         -> explicitly run text via current agent (same as plain text)
 #   /reset              -> forget "resume --last" state (next message starts a fresh exec)
+#   /loginstatus        -> show Codex login status (only for codex agent)
+#   /help               -> list all available bot commands
 #
 # SECURITY:
 #   Only ALLOWED_CHAT_ID can run agent commands (/run, plain text forwarding, /setagent, /reset).
@@ -252,6 +254,63 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _CODEX_HAS_SESSION = False
   await update.message.reply_text("OK. Next message will start a fresh Codex exec (no resume).")
 
+async def cmd_loginstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+
+  if _CURRENT_AGENT != "codex":
+    await update.message.reply_text(f"Command only available for 'codex' agent. Current: {_CURRENT_AGENT}")
+    return
+
+  codex_path = _resolve_codex_path()
+  cmd = [codex_path, "login", "status"]
+  print(f"[RUN] loginstatus exec={cmd!r}")
+
+  try:
+    proc = await asyncio.create_subprocess_exec(
+      *cmd,
+      stdout=asyncio.subprocess.PIPE,
+      stderr=asyncio.subprocess.PIPE
+    )
+  except FileNotFoundError:
+    await update.message.reply_text(f"Cannot find '{cmd[0]}' in PATH.")
+    return
+
+  try:
+    stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+  except asyncio.TimeoutError:
+    proc.kill()
+    await update.message.reply_text("Timeout (60s). Killed.")
+    return
+
+  stdout = (stdout_b or b"").decode("utf-8", errors="replace").strip()
+  stderr = (stderr_b or b"").decode("utf-8", errors="replace").strip()
+
+  result = stdout if stdout else stderr
+  if not result:
+    result = f"exit_code={proc.returncode}"
+
+  await update.message.reply_text(_clip(result))
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+  
+  help_text = """Available commands:
+/id - show your chat_id
+/agent - show current agent and memory status
+/setagent <name> - set agent (supported: codex)
+/run <text> - run text via current agent
+/reset - reset session memory (start fresh)
+/loginstatus - show Codex login status
+/help - show this help
+
+Plain text (without /) is also forwarded to current agent."""
+  
+  await update.message.reply_text(help_text)
+
 async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
 
@@ -293,6 +352,8 @@ def main():
   app.add_handler(CommandHandler("setagent", cmd_setagent))
   app.add_handler(CommandHandler("reset", cmd_reset))
   app.add_handler(CommandHandler("run", cmd_run))
+  app.add_handler(CommandHandler("loginstatus", cmd_loginstatus))
+  app.add_handler(CommandHandler("help", cmd_help))
 
   # Any plain text (non-command) => run agent
   app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
