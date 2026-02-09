@@ -108,6 +108,27 @@ def _resolve_codex_path() -> str:
     return npm_path
   return "codex"  # Let it fail with FileNotFoundError
 
+async def _typing_loop(chat, stop_event: asyncio.Event):
+  """Send typing action every ~4 seconds until stop_event is set."""
+  while not stop_event.is_set():
+    try:
+      await chat.send_action(ChatAction.TYPING)
+    except Exception as e:
+      print(f"[WARN] Failed to send typing action: {e}")
+    try:
+      await asyncio.wait_for(stop_event.wait(), timeout=4)
+    except asyncio.TimeoutError:
+      continue
+
+async def _stop_typing_task(stop_event: asyncio.Event, task: asyncio.Task):
+  """Stop typing loop and cleanup task."""
+  stop_event.set()
+  task.cancel()
+  try:
+    await task
+  except asyncio.CancelledError:
+    pass
+
 def _agent_cmd(agent: str, prompt: str, output_path: Optional[str]) -> List[str]:
   # Keep this small & explicit. You can extend later (claude, etc.).
   agent = (agent or "").strip().lower()
@@ -153,55 +174,28 @@ async def _run_agent(update: Update, prompt: str):
 
   # Start typing indicator loop
   stop_typing = asyncio.Event()
-  async def _typing_loop():
-    while not stop_typing.is_set():
-      try:
-        await update.effective_chat.send_action(ChatAction.TYPING)
-      except Exception:
-        pass
-      try:
-        await asyncio.wait_for(stop_typing.wait(), timeout=4)
-      except asyncio.TimeoutError:
-        continue
+  typing_task = asyncio.create_task(_typing_loop(update.effective_chat, stop_typing))
 
-  typing_task = asyncio.create_task(_typing_loop())
-
+  proc = None
+  stdout_b = stderr_b = b""
   try:
     proc = await asyncio.create_subprocess_exec(
       *cmd,
       stdout=asyncio.subprocess.PIPE,
       stderr=asyncio.subprocess.PIPE
     )
+    stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=300)  # 5 minutes
   except FileNotFoundError:
-    stop_typing.set()
-    typing_task.cancel()
-    try:
-      await typing_task
-    except asyncio.CancelledError:
-      pass
     await update.message.reply_text(f"Cannot find '{cmd[0]}' in PATH. Try `{cmd[0]} --help` in terminal.")
     return
-
-  try:
-    stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=300)  # 5 minutes
   except asyncio.TimeoutError:
-    proc.kill()
-    stop_typing.set()
-    typing_task.cancel()
-    try:
-      await typing_task
-    except asyncio.CancelledError:
-      pass
+    if proc:
+      proc.kill()
     await update.message.reply_text("Timeout (300s). Killed.")
     print("[RUN] timeout -> killed")
     return
   finally:
-    stop_typing.set()
-    typing_task.cancel()
-    try:
-      await typing_task
-    except asyncio.CancelledError:
-      pass
+    await _stop_typing_task(stop_typing, typing_task)
 
   stdout = (stdout_b or b"").decode("utf-8", errors="replace").strip()
   stderr = (stderr_b or b"").decode("utf-8", errors="replace").strip()
