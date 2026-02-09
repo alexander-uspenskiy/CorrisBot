@@ -36,6 +36,13 @@ If relevant, you may also include:
 ### What NOT to include
 When delivering files to the user (via DELIVER_FILE), **do not** include SHA256 hashes or other checksums in the accompanying text. Users practically never verify them, and it clutters the message.
 
+### Temporary files
+For intermediate files, scripts, and other temporary artifacts, use the subdirectory `_Temp\`:
+- Create the directory if it does not exist: `mkdir _Temp`
+- Place temporary scripts, working files, and intermediate outputs there
+- **Important:** `_Temp\` is listed in `.gitignore`, so some agents may automatically ignore files in this directory
+- Do not use `_Temp\` for files you intend to deliver to the user; use `DELIVER_FILE:` with a different path instead
+
 ### Notes
 - The agent is allowed to use full local capabilities (read/write/run) unless otherwise restricted by config.
 - The gateway is responsible for the actual delivery (Telegram/Discord/etc.) and for any later restrictions/guardrails.
