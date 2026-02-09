@@ -25,8 +25,14 @@ ENV/
 _tg_last_message.txt
 sessions/
 prompts/
-CorrisBot.md
+exports/
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Icons (Raw)
+Icons/
+
+# Project file journal
+CorrisBot.md
