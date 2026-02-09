@@ -93,6 +93,18 @@ def _get_latest_session_dir() -> Optional[str]:
     pass
   return None
 
+def _get_git_version() -> str:
+  """Get git commit hash if available, else 'unknown'."""
+  try:
+    import subprocess
+    result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], 
+                           capture_output=True, text=True, timeout=5)
+    if result.returncode == 0:
+      return result.stdout.strip()
+  except Exception:
+    pass
+  return "unknown"
+
 def _create_new_session_dir():
   """Create a new session directory (called by /reset or /new_session)."""
   global _CURRENT_SESSION_DIR
@@ -102,9 +114,15 @@ def _create_new_session_dir():
     session_name = f"session_{timestamp}"
     _CURRENT_SESSION_DIR = os.path.join(_SESSION_DIR, session_name)
     os.makedirs(_CURRENT_SESSION_DIR, exist_ok=True)
-    # Create metadata file
+    # Create metadata file with rich info
     with open(os.path.join(_CURRENT_SESSION_DIR, "meta.txt"), "w") as f:
-      f.write(f"Session started at {timestamp}\n")
+      f.write(f"timestamp: {timestamp}\n")
+      f.write(f"version: {_get_git_version()}\n")
+      f.write(f"workdir: {os.getcwd()}\n")
+      f.write(f"allowed_chat_id: {ALLOWED_CHAT_ID}\n")
+      f.write(f"agent: {_CURRENT_AGENT}\n")
+      f.write(f"console_mode: {_CONSOLE_MODE}\n")
+      f.write(f"resume_active_at_start: {_CODEX_HAS_SESSION}\n")
   except Exception as e:
     print(f"[WARN] Failed to create session directory: {e}")
     _CURRENT_SESSION_DIR = None
@@ -127,6 +145,9 @@ _CONSOLE_MODE = "full"
 
 # --- File delivery settings ---
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB Telegram limit
+
+# --- Concurrency protection ---
+_RUN_LOCK = asyncio.Lock()
 def _is_allowed(update: Update) -> bool:
   chat = update.effective_chat
   return bool(chat) and chat.id == ALLOWED_CHAT_ID_INT
@@ -319,58 +340,76 @@ async def _run_agent(update: Update, prompt: str):
     await update.message.reply_text("Empty prompt.")
     return
 
+  # Concurrency protection: check if already running
+  if _RUN_LOCK.locked():
+    await update.message.reply_text("Busy. Try again in a moment.")
+    return
+
   # Ensure we have a session directory (create if none exists)
   if _CURRENT_SESSION_DIR is None:
     _create_new_session_dir()
 
-  # Get session-specific log paths
-  session_stdout_path, session_stderr_path = _get_session_log_paths()
-  if not session_stdout_path or not session_stderr_path:
-    # Fallback to temp paths if session creation failed
-    session_stdout_path = os.path.join(os.getcwd(), "_temp_stdout.log")
-    session_stderr_path = os.path.join(os.getcwd(), "_temp_stderr.log")
+  async with _RUN_LOCK:
+    # Get session-specific log paths
+    session_stdout_path, session_stderr_path = _get_session_log_paths()
+    if not session_stdout_path or not session_stderr_path:
+      # Fallback to temp paths if session creation failed
+      session_stdout_path = os.path.join(os.getcwd(), "_temp_stdout.log")
+      session_stderr_path = os.path.join(os.getcwd(), "_temp_stderr.log")
 
-  # A per-run output file for the "final assistant message"
-  out_file = os.path.join(os.getcwd(), "_tg_last_message.txt")
-  try:
-    if os.path.exists(out_file):
-      os.remove(out_file)
-  except Exception:
-    pass
-
-  cmd = _agent_cmd(_CURRENT_AGENT, out_file)
-  print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} session={os.path.basename(_CURRENT_SESSION_DIR or 'none')} exec={cmd!r}")
-
-  # Start typing indicator loop
-  stop_typing = asyncio.Event()
-  typing_task = asyncio.create_task(_typing_loop(update.effective_chat, stop_typing))
-
-  proc = None
-  stdout_lines = []
-  stderr_lines = []
-  stop_pump = asyncio.Event()
-  stdout_task = None
-  stderr_task = None
-  try:
-    proc = await asyncio.create_subprocess_exec(
-      *cmd,
-      stdin=asyncio.subprocess.PIPE,
-      stdout=asyncio.subprocess.PIPE,
-      stderr=asyncio.subprocess.PIPE
-    )
-
-    # Start pump tasks for streaming output (session-specific logs)
-    stdout_task = asyncio.create_task(_pump_stream(proc.stdout, "[codex:out] ", session_stdout_path, _CONSOLE_MODE, stop_pump, stdout_lines))
-    stderr_task = asyncio.create_task(_pump_stream(proc.stderr, "[codex:err] ", session_stderr_path, _CONSOLE_MODE, stop_pump, stderr_lines))
-
-    # Send prompt via stdin (supports multiline), then wait for process
+    # A per-run output file for the "final assistant message"
+    out_file = os.path.join(os.getcwd(), "_tg_last_message.txt")
     try:
-      proc.stdin.write(prompt.encode("utf-8"))
-      await proc.stdin.drain()
-      proc.stdin.close()
-      await asyncio.wait_for(proc.wait(), timeout=600)  # 10 minutes
-    except asyncio.TimeoutError:
-      proc.kill()
+      if os.path.exists(out_file):
+        os.remove(out_file)
+    except Exception:
+      pass
+
+    cmd = _agent_cmd(_CURRENT_AGENT, out_file)
+    print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} session={os.path.basename(_CURRENT_SESSION_DIR or 'none')} exec={cmd!r}")
+
+    # Start typing indicator loop
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(_typing_loop(update.effective_chat, stop_typing))
+
+    proc = None
+    stdout_lines = []
+    stderr_lines = []
+    stop_pump = asyncio.Event()
+    stdout_task = None
+    stderr_task = None
+    try:
+      proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+      )
+
+      # Start pump tasks for streaming output (session-specific logs)
+      stdout_task = asyncio.create_task(_pump_stream(proc.stdout, "[codex:out] ", session_stdout_path, _CONSOLE_MODE, stop_pump, stdout_lines))
+      stderr_task = asyncio.create_task(_pump_stream(proc.stderr, "[codex:err] ", session_stderr_path, _CONSOLE_MODE, stop_pump, stderr_lines))
+
+      # Send prompt via stdin (supports multiline), then wait for process
+      try:
+        proc.stdin.write(prompt.encode("utf-8"))
+        await proc.stdin.drain()
+        proc.stdin.close()
+        await asyncio.wait_for(proc.wait(), timeout=600)  # 10 minutes
+      except asyncio.TimeoutError:
+        proc.kill()
+        stop_pump.set()
+        for task in (stdout_task, stderr_task):
+          task.cancel()
+          try:
+            await task
+          except asyncio.CancelledError:
+            pass
+        await update.message.reply_text("Timeout (600s). Killed.")
+        print("[RUN] timeout (600s) -> killed")
+        return
+
+      # Stop pump tasks
       stop_pump.set()
       for task in (stdout_task, stderr_task):
         task.cancel()
@@ -378,65 +417,53 @@ async def _run_agent(update: Update, prompt: str):
           await task
         except asyncio.CancelledError:
           pass
-      await update.message.reply_text("Timeout (600s). Killed.")
-      print("[RUN] timeout (600s) -> killed")
+
+    except FileNotFoundError:
+      await update.message.reply_text(f"Cannot find '{cmd[0]}' in PATH. Try `{cmd[0]} --help` in terminal.")
       return
+    finally:
+      await _stop_typing_task(stop_typing, typing_task)
 
-    # Stop pump tasks
-    stop_pump.set()
-    for task in (stdout_task, stderr_task):
-      task.cancel()
-      try:
-        await task
-      except asyncio.CancelledError:
-        pass
+    # Use collected output for Telegram response
+    stdout = "\n".join(stdout_lines)
+    stderr = "\n".join(stderr_lines)
 
-  except FileNotFoundError:
-    await update.message.reply_text(f"Cannot find '{cmd[0]}' in PATH. Try `{cmd[0]} --help` in terminal.")
-    return
-  finally:
-    await _stop_typing_task(stop_typing, typing_task)
+    print(f"[RUN] exit_code={proc.returncode} stdout_len={len(stdout)} stderr_len={len(stderr)}")
 
-  # Use collected output for Telegram response
-  stdout = "\n".join(stdout_lines)
-  stderr = "\n".join(stderr_lines)
+    # If codex succeeded at least once, enable resume mode for future messages.
+    if _CURRENT_AGENT == "codex" and proc.returncode == 0:
+      global _CODEX_HAS_SESSION
+      _CODEX_HAS_SESSION = True
 
-  print(f"[RUN] exit_code={proc.returncode} stdout_len={len(stdout)} stderr_len={len(stderr)}")
-
-  # If codex succeeded at least once, enable resume mode for future messages.
-  if _CURRENT_AGENT == "codex" and proc.returncode == 0:
-    global _CODEX_HAS_SESSION
-    _CODEX_HAS_SESSION = True
-
-  # Prefer the "final assistant message" written by codex.
-  final_msg = ""
-  try:
-    if os.path.exists(out_file):
-      with open(out_file, "r", encoding="utf-8", errors="replace") as f:
-        final_msg = f.read().strip()
-  except Exception:
+    # Prefer the "final assistant message" written by codex.
     final_msg = ""
+    try:
+      if os.path.exists(out_file):
+        with open(out_file, "r", encoding="utf-8", errors="replace") as f:
+          final_msg = f.read().strip()
+    except Exception:
+      final_msg = ""
 
-  # 1) Process final message: extract file delivery directives and send clean text
-  if final_msg:
-    clean_text, file_paths = _extract_deliver_files(final_msg)
-    if clean_text:
-      await update.message.reply_text(_clip(clean_text))
-    # Deliver files if any directives found
-    if file_paths:
-      await _deliver_files(update, file_paths)
-  else:
-    # Fallback: if no out_file produced anything, use stdout (usually still cleaner than stderr)
-    if stdout:
-      await update.message.reply_text(_clip(stdout))
+    # 1) Process final message: extract file delivery directives and send clean text
+    if final_msg:
+      clean_text, file_paths = _extract_deliver_files(final_msg)
+      if clean_text:
+        await update.message.reply_text(_clip(clean_text))
+      # Deliver files if any directives found
+      if file_paths:
+        await _deliver_files(update, file_paths)
+    else:
+      # Fallback: if no out_file produced anything, use stdout (usually still cleaner than stderr)
+      if stdout:
+        await update.message.reply_text(_clip(stdout))
 
-  # 2) Only surface stderr to Telegram when something failed.
-  if proc.returncode != 0 and stderr:
-    await update.message.reply_text("stderr:\n" + _clip(stderr))
+    # 2) Only surface stderr to Telegram when something failed.
+    if proc.returncode != 0 and stderr:
+      await update.message.reply_text("stderr:\n" + _clip(stderr))
 
-  # 3) If absolutely nothing came out, at least report exit code.
-  if not final_msg and not stdout and (proc.returncode == 0) and not stderr:
-    await update.message.reply_text(f"Done. exit_code={proc.returncode}")
+    # 3) If absolutely nothing came out, at least report exit code.
+    if not final_msg and not stdout and (proc.returncode == 0) and not stderr:
+      await update.message.reply_text(f"Done. exit_code={proc.returncode}")
 
 # --- Telegram handlers ---
 
@@ -464,10 +491,8 @@ async def cmd_setagent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Usage: /setagent <name>   (supported: codex)")
     return
 
-  # Validate by trying to build a command.
-  try:
-    _agent_cmd(name, "ping", None)
-  except Exception:
+  # Validate agent name (only 'codex' is supported currently)
+  if name not in ("codex",):
     await update.message.reply_text(f"Unknown agent: {name}. Supported: codex")
     return
 
@@ -545,7 +570,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /toggleconsole - toggle console mode
 /help - show this help
 
-Plain text (without /) is also forwarded to current agent."""
+Notes:
+- Only one run at a time; if busy, you'll get "Busy. Try again in a moment."
+- Plain text (without /) is also forwarded to current agent."""
   
   await update.message.reply_text(help_text)
 
