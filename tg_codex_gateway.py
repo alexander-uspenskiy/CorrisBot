@@ -43,6 +43,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -150,7 +151,20 @@ async def _run_agent(update: Update, prompt: str):
   cmd = _agent_cmd(_CURRENT_AGENT, prompt, out_file)
   print(f"[RUN] agent={_CURRENT_AGENT} exec={cmd!r}")
 
-  await update.message.reply_text(f"Running on {_CURRENT_AGENT}…")
+  # Start typing indicator loop
+  stop_typing = asyncio.Event()
+  async def _typing_loop():
+    while not stop_typing.is_set():
+      try:
+        await update.effective_chat.send_action(ChatAction.TYPING)
+      except Exception:
+        pass
+      try:
+        await asyncio.wait_for(stop_typing.wait(), timeout=4)
+      except asyncio.TimeoutError:
+        continue
+
+  typing_task = asyncio.create_task(_typing_loop())
 
   try:
     proc = await asyncio.create_subprocess_exec(
@@ -159,6 +173,12 @@ async def _run_agent(update: Update, prompt: str):
       stderr=asyncio.subprocess.PIPE
     )
   except FileNotFoundError:
+    stop_typing.set()
+    typing_task.cancel()
+    try:
+      await typing_task
+    except asyncio.CancelledError:
+      pass
     await update.message.reply_text(f"Cannot find '{cmd[0]}' in PATH. Try `{cmd[0]} --help` in terminal.")
     return
 
@@ -166,9 +186,22 @@ async def _run_agent(update: Update, prompt: str):
     stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=300)  # 5 minutes
   except asyncio.TimeoutError:
     proc.kill()
+    stop_typing.set()
+    typing_task.cancel()
+    try:
+      await typing_task
+    except asyncio.CancelledError:
+      pass
     await update.message.reply_text("Timeout (300s). Killed.")
     print("[RUN] timeout -> killed")
     return
+  finally:
+    stop_typing.set()
+    typing_task.cancel()
+    try:
+      await typing_task
+    except asyncio.CancelledError:
+      pass
 
   stdout = (stdout_b or b"").decode("utf-8", errors="replace").strip()
   stderr = (stderr_b or b"").decode("utf-8", errors="replace").strip()
