@@ -30,6 +30,9 @@
 #   /run <text>         -> explicitly run text via current agent (same as plain text)
 #   /reset              -> forget "resume --last" state (next message starts a fresh exec)
 #   /loginstatus        -> show Codex login status (only for codex agent)
+#   /console            -> show current console output mode
+#   /setconsole <mode>  -> set console mode: quiet (default) or full
+#   /toggleconsole      -> toggle between quiet and full console mode
 #   /help               -> list all available bot commands
 #
 # SECURITY:
@@ -65,6 +68,9 @@ _CURRENT_AGENT = "codex"
 # --- "Memory" flag for Codex exec resume --last ---
 _CODEX_HAS_SESSION = False
 
+# --- Console output mode: "quiet" (default) or "full" ---
+_CONSOLE_MODE = "quiet"
+
 # --- Logging ---
 _LOG_STEM = os.path.join(os.getcwd(), "tg_codex_gateway")
 _STDERR_LOG = _LOG_STEM + "_stderr.log"
@@ -98,6 +104,11 @@ def _append_log(path: str, text: str):
     f.write(text)
     f.write("\n")
 
+def _append_log_line(path: str, line: str):
+  """Append a single line to log file (no timestamp header)."""
+  with open(path, "a", encoding="utf-8", errors="replace") as f:
+    f.write(line + "\n")
+
 def _resolve_codex_path() -> str:
   # Try to find codex in PATH, fallback to known npm location (Windows).
   codex_path = shutil.which("codex") or shutil.which("codex.cmd")
@@ -128,6 +139,26 @@ async def _stop_typing_task(stop_event: asyncio.Event, task: asyncio.Task):
     await task
   except asyncio.CancelledError:
     pass
+
+async def _pump_stream(stream, prefix: str, log_path: str, mode: str, stop_event: asyncio.Event, collector: list):
+  """Pump lines from stream to console (if full mode) and log file."""
+  while not stop_event.is_set():
+    try:
+      line_b = await asyncio.wait_for(stream.readline(), timeout=0.5)
+      if not line_b:
+        break
+      line = line_b.decode("utf-8", errors="replace").rstrip("\n\r")
+      collector.append(line)
+      if mode == "full":
+        print(f"{prefix}{line}")
+      _append_log_line(log_path, line)
+    except asyncio.TimeoutError:
+      continue
+    except asyncio.CancelledError:
+      break
+    except Exception as e:
+      print(f"[WARN] Pump error: {e}")
+      break
 
 def _agent_cmd(agent: str, prompt: str, output_path: Optional[str]) -> List[str]:
   # Keep this small & explicit. You can extend later (claude, etc.).
@@ -170,39 +201,65 @@ async def _run_agent(update: Update, prompt: str):
     pass
 
   cmd = _agent_cmd(_CURRENT_AGENT, prompt, out_file)
-  print(f"[RUN] agent={_CURRENT_AGENT} exec={cmd!r}")
+  print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} exec={cmd!r}")
 
   # Start typing indicator loop
   stop_typing = asyncio.Event()
   typing_task = asyncio.create_task(_typing_loop(update.effective_chat, stop_typing))
 
   proc = None
-  stdout_b = stderr_b = b""
+  stdout_lines = []
+  stderr_lines = []
+  stop_pump = asyncio.Event()
+  stdout_task = None
+  stderr_task = None
   try:
     proc = await asyncio.create_subprocess_exec(
       *cmd,
       stdout=asyncio.subprocess.PIPE,
       stderr=asyncio.subprocess.PIPE
     )
-    stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=300)  # 5 minutes
+
+    # Start pump tasks for streaming output
+    stdout_task = asyncio.create_task(_pump_stream(proc.stdout, "[codex:out] ", _STDOUT_LOG, _CONSOLE_MODE, stop_pump, stdout_lines))
+    stderr_task = asyncio.create_task(_pump_stream(proc.stderr, "[codex:err] ", _STDERR_LOG, _CONSOLE_MODE, stop_pump, stderr_lines))
+
+    # Wait for process with timeout
+    try:
+      await asyncio.wait_for(proc.wait(), timeout=300)  # 5 minutes
+    except asyncio.TimeoutError:
+      proc.kill()
+      stop_pump.set()
+      for task in (stdout_task, stderr_task):
+        task.cancel()
+        try:
+          await task
+        except asyncio.CancelledError:
+          pass
+      await update.message.reply_text("Timeout (300s). Killed.")
+      print("[RUN] timeout -> killed")
+      return
+
+    # Stop pump tasks
+    stop_pump.set()
+    for task in (stdout_task, stderr_task):
+      task.cancel()
+      try:
+        await task
+      except asyncio.CancelledError:
+        pass
+
   except FileNotFoundError:
     await update.message.reply_text(f"Cannot find '{cmd[0]}' in PATH. Try `{cmd[0]} --help` in terminal.")
-    return
-  except asyncio.TimeoutError:
-    if proc:
-      proc.kill()
-    await update.message.reply_text("Timeout (300s). Killed.")
-    print("[RUN] timeout -> killed")
     return
   finally:
     await _stop_typing_task(stop_typing, typing_task)
 
-  stdout = (stdout_b or b"").decode("utf-8", errors="replace").strip()
-  stderr = (stderr_b or b"").decode("utf-8", errors="replace").strip()
+  # Use collected output for Telegram response
+  stdout = "\n".join(stdout_lines)
+  stderr = "\n".join(stderr_lines)
 
   print(f"[RUN] exit_code={proc.returncode} stdout_len={len(stdout)} stderr_len={len(stderr)}")
-  _append_log(_STDOUT_LOG, stdout)
-  _append_log(_STDERR_LOG, stderr)
 
   # If codex succeeded at least once, enable resume mode for future messages.
   if _CURRENT_AGENT == "codex" and proc.returncode == 0:
@@ -332,11 +389,45 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /run <text> - run text via current agent
 /reset - reset session memory (start fresh)
 /loginstatus - show Codex login status
+/console - show current console mode
+/setconsole quiet|full - set console output mode
+/toggleconsole - toggle console mode
 /help - show this help
 
 Plain text (without /) is also forwarded to current agent."""
   
   await update.message.reply_text(help_text)
+
+async def cmd_console(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+  await update.message.reply_text(f"console_mode = {_CONSOLE_MODE}")
+
+async def cmd_setconsole(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+  
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+  
+  mode = " ".join(context.args).strip().lower()
+  if mode not in ("quiet", "full"):
+    await update.message.reply_text("Usage: /setconsole quiet|full")
+    return
+  
+  global _CONSOLE_MODE
+  _CONSOLE_MODE = mode
+  await update.message.reply_text(f"OK. console_mode = {_CONSOLE_MODE}")
+
+async def cmd_toggleconsole(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+  
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+  
+  global _CONSOLE_MODE
+  _CONSOLE_MODE = "full" if _CONSOLE_MODE == "quiet" else "quiet"
+  await update.message.reply_text(f"OK. console_mode = {_CONSOLE_MODE}")
 
 async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
@@ -368,6 +459,7 @@ def main():
   print("[BOOT] Starting Telegram gateway (polling)…")
   print(f"[BOOT] Allowed chat_id = {ALLOWED_CHAT_ID_INT}")
   print(f"[BOOT] Current agent = {_CURRENT_AGENT}")
+  print(f"[BOOT] Console mode = {_CONSOLE_MODE} (use /setconsole to change)")
   print("[BOOT] Codex memory: ON after first successful run (uses `codex exec resume --last`).")
   print(f"[BOOT] Logs: {_STDOUT_LOG} / {_STDERR_LOG}")
 
@@ -381,6 +473,9 @@ def main():
   app.add_handler(CommandHandler("run", cmd_run))
   app.add_handler(CommandHandler("loginstatus", cmd_loginstatus))
   app.add_handler(CommandHandler("help", cmd_help))
+  app.add_handler(CommandHandler("console", cmd_console))
+  app.add_handler(CommandHandler("setconsole", cmd_setconsole))
+  app.add_handler(CommandHandler("toggleconsole", cmd_toggleconsole))
 
   # Any plain text (non-command) => run agent
   app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
