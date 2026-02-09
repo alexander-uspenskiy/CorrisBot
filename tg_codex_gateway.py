@@ -332,6 +332,32 @@ def _agent_cmd(agent: str, output_path: Optional[str]) -> List[str]:
 
   raise ValueError(f"Unknown agent: {agent}")
 
+def _append_run_log(event: str, update: Update, prompt_len: int = 0, cmd: List[str] = None, 
+                     exit_code: int = None, timeout_killed: bool = False, duration_ms: int = None):
+  """Append a line to the session run.log."""
+  if not _CURRENT_SESSION_DIR:
+    return
+  try:
+    run_log_path = os.path.join(_CURRENT_SESSION_DIR, "run.log")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    user = update.effective_user
+    user_info = f"@{user.username}" if user and user.username else (user.full_name if user else "unknown")
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    session_name = os.path.basename(_CURRENT_SESSION_DIR)
+    
+    if event == "START":
+      cmd_str = str(cmd) if cmd else "[]"
+      line = f"{ts} START chat_id={chat_id} user={user_info} prompt_len={prompt_len} session={session_name} cmd={cmd_str}\n"
+    elif event == "END":
+      line = f"{ts} END chat_id={chat_id} exit={exit_code} timeout_killed={timeout_killed} duration_ms={duration_ms}\n"
+    else:
+      line = f"{ts} {event} chat_id={chat_id}\n"
+    
+    with open(run_log_path, "a", encoding="utf-8") as f:
+      f.write(line)
+  except Exception:
+    pass
+
 async def _run_agent(update: Update, prompt: str):
   global _CURRENT_AGENT, _CODEX_HAS_SESSION, _CURRENT_SESSION_DIR
 
@@ -340,8 +366,10 @@ async def _run_agent(update: Update, prompt: str):
     await update.message.reply_text("Empty prompt.")
     return
 
-  # Concurrency protection: check if already running
-  if _RUN_LOCK.locked():
+  # Concurrency protection: non-blocking acquire (Policy A: reject while busy)
+  try:
+    await asyncio.wait_for(_RUN_LOCK.acquire(), timeout=0.001)
+  except asyncio.TimeoutError:
     await update.message.reply_text("Busy. Try again in a moment.")
     return
 
@@ -349,7 +377,10 @@ async def _run_agent(update: Update, prompt: str):
   if _CURRENT_SESSION_DIR is None:
     _create_new_session_dir()
 
-  async with _RUN_LOCK:
+  run_start_time = datetime.now()
+  timeout_killed = False
+  
+  try:
     # Get session-specific log paths
     session_stdout_path, session_stderr_path = _get_session_log_paths()
     if not session_stdout_path or not session_stderr_path:
@@ -367,6 +398,9 @@ async def _run_agent(update: Update, prompt: str):
 
     cmd = _agent_cmd(_CURRENT_AGENT, out_file)
     print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} session={os.path.basename(_CURRENT_SESSION_DIR or 'none')} exec={cmd!r}")
+    
+    # Log run start
+    _append_run_log("START", update, len(prompt), cmd)
 
     # Start typing indicator loop
     stop_typing = asyncio.Event()
@@ -397,6 +431,7 @@ async def _run_agent(update: Update, prompt: str):
         proc.stdin.close()
         await asyncio.wait_for(proc.wait(), timeout=600)  # 10 minutes
       except asyncio.TimeoutError:
+        timeout_killed = True
         proc.kill()
         stop_pump.set()
         for task in (stdout_task, stderr_task):
@@ -405,9 +440,14 @@ async def _run_agent(update: Update, prompt: str):
             await task
           except asyncio.CancelledError:
             pass
+        # Wait for process to actually exit so returncode is defined
+        try:
+          await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+          pass
         await update.message.reply_text("Timeout (600s). Killed.")
         print("[RUN] timeout (600s) -> killed")
-        return
+        # Will exit after finally block below
 
       # Stop pump tasks
       stop_pump.set()
@@ -423,6 +463,10 @@ async def _run_agent(update: Update, prompt: str):
       return
     finally:
       await _stop_typing_task(stop_typing, typing_task)
+
+    # If timed out, exit now (END logging and lock release will happen in outer finally)
+    if timeout_killed:
+      return
 
     # Use collected output for Telegram response
     stdout = "\n".join(stdout_lines)
@@ -464,6 +508,13 @@ async def _run_agent(update: Update, prompt: str):
     # 3) If absolutely nothing came out, at least report exit code.
     if not final_msg and not stdout and (proc.returncode == 0) and not stderr:
       await update.message.reply_text(f"Done. exit_code={proc.returncode}")
+  finally:
+    # Log run end (always executed, even on timeout)
+    duration_ms = int((datetime.now() - run_start_time).total_seconds() * 1000)
+    exit_code = -1 if timeout_killed else (proc.returncode if proc else -1)
+    _append_run_log("END", update, exit_code=exit_code, 
+                    timeout_killed=timeout_killed, duration_ms=duration_ms)
+    _RUN_LOCK.release()
 
 # --- Telegram handlers ---
 
