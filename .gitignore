@@ -27,6 +27,7 @@ _Temp/
 sessions/
 prompts/
 exports/
+.gateway.lock
 
 # OS files
 .DS_Store

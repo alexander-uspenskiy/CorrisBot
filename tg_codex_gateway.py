@@ -41,6 +41,8 @@
 #   /id is allowed for everyone (so you can discover chat_id), but is still echoed to console.
 
 import os
+import sys
+import atexit
 import asyncio
 import re
 import shutil
@@ -50,6 +52,54 @@ from datetime import datetime
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+
+# --- Single instance lock ---
+_LOCK_FILE = os.path.join(os.getcwd(), ".gateway.lock")
+
+def _check_single_instance():
+  """Ensure only one gateway instance is running."""
+  if os.path.exists(_LOCK_FILE):
+    try:
+      with open(_LOCK_FILE, "r") as f:
+        old_pid = int(f.read().strip())
+      # Check if process still exists (Windows-compatible)
+      try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(1, False, old_pid)  # PROCESS_TERMINATE = 1
+        if handle:
+          kernel32.CloseHandle(handle)
+          print(f"[ERROR] Gateway already running (PID {old_pid})")
+          print(f"[ERROR] Remove {_LOCK_FILE} if process is dead.")
+          sys.exit(1)
+      except Exception:
+        pass
+    except (ValueError, IOError):
+      pass
+    # Stale lock file, remove it
+    try:
+      os.remove(_LOCK_FILE)
+    except Exception:
+      pass
+  
+  # Create lock file with our PID
+  with open(_LOCK_FILE, "w") as f:
+    f.write(str(os.getpid()))
+
+def _release_lock():
+  """Release the lock on exit."""
+  try:
+    if os.path.exists(_LOCK_FILE):
+      with open(_LOCK_FILE, "r") as f:
+        pid = int(f.read().strip())
+      if pid == os.getpid():
+        os.remove(_LOCK_FILE)
+  except Exception:
+    pass
+
+# Check and register cleanup
+_check_single_instance()
+atexit.register(_release_lock)
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 ALLOWED_CHAT_ID = os.environ.get("ALLOWED_CHAT_ID", "").strip()
