@@ -10,9 +10,10 @@
 # Codex CLI behavior tweaks:
 #   1) Only send the assistant's FINAL message back to Telegram
 #      using `--output-last-message/-o` (so no CLI headers in Telegram).
-#   2) Keep "memory" across messages by resuming the last exec thread:
+#   2) Keep "memory" across messages by resuming the previous exec session:
 #         first run:  codex exec ...
-#         next runs:  codex exec resume --last ...
+#         next runs:  codex exec resume <SESSION_ID> ...
+#      (We persist the last seen Codex session id in this repo's ./sessions/* logs.)
 #   3) Log full stdout/stderr to console and to local log files for debugging.
 #
 # Setup:
@@ -117,9 +118,63 @@ except ValueError:
 # --- Agent selection (in-memory). Default is Codex CLI. ---
 _CURRENT_AGENT = "codex"
 
-# --- Session persistence for Codex exec resume --last ---
+# --- Session persistence for gateway logging + Codex session tracking ---
 _SESSION_DIR = os.path.join(os.getcwd(), "sessions")
-_CURRENT_SESSION_DIR = None  # Path to current active session directory
+_CURRENT_SESSION_DIR = None  # Path to current active session directory (gateway logs)
+
+# IMPORTANT:
+# Codex CLI has its own local history store (~/.codex/sessions/*).
+# This gateway persists the last Codex session id (UUID) into ./sessions/<session_...>/codex_session_id.txt
+# and uses that exact id for `codex exec resume <id>`.
+_CODEX_SESSION_ID: Optional[str] = None
+# If True, the next Codex run MUST be fresh (`codex exec -`), even if a prior session exists.
+# This is how /reset guarantees a new Codex session, without disabling resume in general.
+_CODEX_FORCE_FRESH_NEXT_RUN = False
+
+def _codex_session_id_path(session_dir: Optional[str]) -> Optional[str]:
+  if not session_dir:
+    return None
+  return os.path.join(session_dir, "codex_session_id.txt")
+
+def _fresh_next_run_flag_path(session_dir: Optional[str]) -> Optional[str]:
+  if not session_dir:
+    return None
+  return os.path.join(session_dir, "force_fresh_next_run.flag")
+
+def _set_fresh_next_run_flag(session_dir: Optional[str], enabled: bool):
+  try:
+    p = _fresh_next_run_flag_path(session_dir)
+    if not p:
+      return
+    if enabled:
+      with open(p, "w", encoding="utf-8") as f:
+        f.write("1\n")
+    elif os.path.exists(p):
+      os.remove(p)
+  except Exception:
+    pass
+
+def _load_fresh_next_run_flag(session_dir: Optional[str]) -> bool:
+  try:
+    p = _fresh_next_run_flag_path(session_dir)
+    return bool(p and os.path.isfile(p))
+  except Exception:
+    return False
+
+def _load_codex_session_id(session_dir: Optional[str]) -> Optional[str]:
+  """Load the persisted Codex session id for a gateway session (if any)."""
+  try:
+    p = _codex_session_id_path(session_dir)
+    if not p or not os.path.isfile(p):
+      return None
+    with open(p, "r", encoding="utf-8", errors="replace") as f:
+      s = f.read().strip()
+    # Basic sanity: UUID-ish
+    if re.fullmatch(r"[0-9a-fA-F-]{16,64}", s or ""):
+      return s
+  except Exception:
+    pass
+  return None
 
 def _ensure_session_dir():
   """Create sessions directory if it doesn't exist."""
@@ -157,7 +212,7 @@ def _get_git_version() -> str:
 
 def _create_new_session_dir():
   """Create a new session directory (called by /reset or /new_session)."""
-  global _CURRENT_SESSION_DIR
+  global _CURRENT_SESSION_DIR, _CODEX_SESSION_ID
   try:
     _ensure_session_dir()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -172,7 +227,7 @@ def _create_new_session_dir():
       f.write(f"allowed_chat_id: {ALLOWED_CHAT_ID}\n")
       f.write(f"agent: {_CURRENT_AGENT}\n")
       f.write(f"console_mode: {_CONSOLE_MODE}\n")
-      f.write(f"resume_active_at_start: {_CODEX_HAS_SESSION}\n")
+      f.write(f"codex_session_id_at_start: {_CODEX_SESSION_ID or ''}\n")
   except Exception as e:
     print(f"[WARN] Failed to create session directory: {e}")
     _CURRENT_SESSION_DIR = None
@@ -188,7 +243,12 @@ def _get_session_log_paths() -> Tuple[Optional[str], Optional[str]]:
 # Ensure directory exists and load initial state
 _ensure_session_dir()
 _CURRENT_SESSION_DIR = _get_latest_session_dir()
-_CODEX_HAS_SESSION = _CURRENT_SESSION_DIR is not None
+_CODEX_SESSION_ID = _load_codex_session_id(_CURRENT_SESSION_DIR)
+if _CURRENT_SESSION_DIR is None:
+  # Fresh install / first-ever boot: avoid `resume --last` failure when no prior Codex session exists.
+  _CODEX_FORCE_FRESH_NEXT_RUN = True
+else:
+  _CODEX_FORCE_FRESH_NEXT_RUN = _load_fresh_next_run_flag(_CURRENT_SESSION_DIR)
 
 # --- Console output mode: "quiet" (default) or "full" ---
 _CONSOLE_MODE = "full"
@@ -225,6 +285,29 @@ def _append_log(path: str, text: str):
     f.write(f"\n===== {ts} =====\n")
     f.write(text)
     f.write("\n")
+
+def _extract_codex_session_id(stdout: str, stderr: str) -> Optional[str]:
+  """
+  Best-effort extraction of Codex session UUID from CLI output.
+  Example line: 'session id: 019c493b-be30-7de0-a239-972d96f93990'
+  """
+  for blob in (stdout or "", stderr or ""):
+    m = re.search(r"(?im)^session id:\s*([0-9a-fA-F-]{16,64})\s*$", blob)
+    if m:
+      return m.group(1).strip()
+  return None
+
+def _persist_codex_session_id(session_id: str):
+  """Persist Codex session id for this gateway session so restarts resume the same session."""
+  global _CURRENT_SESSION_DIR
+  try:
+    p = _codex_session_id_path(_CURRENT_SESSION_DIR)
+    if not p:
+      return
+    with open(p, "w", encoding="utf-8") as f:
+      f.write(session_id.strip() + "\n")
+  except Exception:
+    pass
 
 
 def _resolve_codex_path() -> str:
@@ -369,16 +452,20 @@ def _agent_cmd(agent: str, output_path: Optional[str]) -> List[str]:
     if output_path:
       base += ["--output-last-message", output_path]
 
-    global _CODEX_HAS_SESSION
-    if _CODEX_HAS_SESSION:
-      # Continue the last non-interactive session in this working directory.
-      # Docs: codex exec resume --last "follow-up"
-      # Note: "-" tells codex to read prompt from stdin
-      return base + ["resume", "--last", "-"]
+    global _CODEX_SESSION_ID, _CODEX_FORCE_FRESH_NEXT_RUN
 
-    # First message starts a fresh non-interactive session.
-    # Note: "-" tells codex to read prompt from stdin
-    return base + ["-"]
+    if _CODEX_FORCE_FRESH_NEXT_RUN:
+      # /reset requested a fresh Codex session on the next run.
+      return base + ["-"]
+
+    if _CODEX_SESSION_ID:
+      # Continue the exact previous Codex session id (more reliable than resume --last).
+      # Note: "-" tells codex to read prompt from stdin
+      return base + ["resume", _CODEX_SESSION_ID, "-"]
+
+    # Backward-compatible fallback: if we haven't recorded an id yet, behave like the old gateway:
+    # try to resume the most recent session for this cwd.
+    return base + ["resume", "--last", "-"]
 
   raise ValueError(f"Unknown agent: {agent}")
 
@@ -409,7 +496,7 @@ def _append_run_log(event: str, update: Update, prompt_len: int = 0, cmd: List[s
     pass
 
 async def _run_agent(update: Update, prompt: str):
-  global _CURRENT_AGENT, _CODEX_HAS_SESSION, _CURRENT_SESSION_DIR
+  global _CURRENT_AGENT, _CODEX_SESSION_ID, _CODEX_FORCE_FRESH_NEXT_RUN, _CURRENT_SESSION_DIR
 
   prompt = (prompt or "").strip()
   if not prompt:
@@ -524,10 +611,14 @@ async def _run_agent(update: Update, prompt: str):
 
     print(f"[RUN] exit_code={proc.returncode} stdout_len={len(stdout)} stderr_len={len(stderr)}")
 
-    # If codex succeeded at least once, enable resume mode for future messages.
+    # If codex succeeded, capture/persist the session id so future messages resume reliably.
     if _CURRENT_AGENT == "codex" and proc.returncode == 0:
-      global _CODEX_HAS_SESSION
-      _CODEX_HAS_SESSION = True
+      _CODEX_FORCE_FRESH_NEXT_RUN = False
+      _set_fresh_next_run_flag(_CURRENT_SESSION_DIR, False)
+      sid = _extract_codex_session_id(stdout, stderr)
+      if sid and sid != _CODEX_SESSION_ID:
+        _CODEX_SESSION_ID = sid
+        _persist_codex_session_id(sid)
 
     # Prefer the "final assistant message" written by codex.
     final_msg = ""
@@ -582,8 +673,11 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Access denied.")
     return
   
-  mem = "on" if (_CURRENT_AGENT == "codex" and _CODEX_HAS_SESSION) else "off"
-  await update.message.reply_text(f"current_agent = {_CURRENT_AGENT}\nresume_memory = {mem}")
+  mem = "off"
+  if _CURRENT_AGENT == "codex" and not _CODEX_FORCE_FRESH_NEXT_RUN:
+    mem = "on"
+  sid = _CODEX_SESSION_ID or ""
+  await update.message.reply_text(f"current_agent = {_CURRENT_AGENT}\nresume_memory = {mem}\ncodex_session_id = {sid}")
 
 async def cmd_setagent(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
@@ -614,9 +708,11 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Access denied.")
     return
 
-  global _CODEX_HAS_SESSION
-  _CODEX_HAS_SESSION = False
+  global _CODEX_SESSION_ID, _CODEX_FORCE_FRESH_NEXT_RUN
+  _CODEX_SESSION_ID = None
+  _CODEX_FORCE_FRESH_NEXT_RUN = True
   _create_new_session_dir()
+  _set_fresh_next_run_flag(_CURRENT_SESSION_DIR, True)
   await update.message.reply_text("OK. New session started. Next run will be fresh (no resume).")
 
 async def cmd_loginstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -749,7 +845,8 @@ def main():
   print(f"[BOOT] Allowed chat_id = {ALLOWED_CHAT_ID_INT}")
   print(f"[BOOT] Current agent = {_CURRENT_AGENT}")
   print(f"[BOOT] Console mode = {_CONSOLE_MODE} (use /setconsole to change)")
-  print("[BOOT] Codex memory: ON after first successful run (uses `codex exec resume --last`).")
+  print("[BOOT] Codex resume: uses persisted Codex session id when available (codex exec resume <id>).")
+  print(f"[BOOT] Codex session id loaded: {_CODEX_SESSION_ID or 'none'}")
   print(f"[BOOT] Session storage: {_SESSION_DIR}/")
 
   app = Application.builder().token(TOKEN).build()
