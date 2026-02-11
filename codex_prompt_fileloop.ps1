@@ -13,6 +13,21 @@ $PromptsDir = Join-Path $Root "Prompts"
 New-Item -ItemType Directory -Force -Path $PromptsDir | Out-Null
 
 $StatePath = Join-Path $PromptsDir "loop_state.json"
+$ConsoleLogPath = Join-Path $PromptsDir "Console.log"
+
+function Write-ConsoleLine {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Text,
+
+        [Parameter(Mandatory = $false)]
+        [ConsoleColor]$Color = [ConsoleColor]::Gray
+    )
+
+    Write-Host $Text -ForegroundColor $Color
+    $stamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Add-Content -Path $ConsoleLogPath -Encoding UTF8 -Value "[$stamp] $Text"
+}
 
 function Read-State {
     if (-not (Test-Path -LiteralPath $StatePath)) {
@@ -34,7 +49,7 @@ function Read-State {
         $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
         $corruptPath = Join-Path $PromptsDir "loop_state.corrupt.$stamp.json"
         Move-Item -Path $StatePath -Destination $corruptPath -Force -ErrorAction SilentlyContinue
-        Write-Warning "State file is invalid JSON. Moved to '$corruptPath'. Starting with empty state."
+        Write-ConsoleLine -Text "[warning] State file is invalid JSON. Moved to '$corruptPath'. Starting with empty state." -Color Yellow
         return @{
             thread_id = $null
             next_index = 0
@@ -73,7 +88,7 @@ function Wait-ForPromptFile {
     }
 
     $targetName = [IO.Path]::GetFileName($FilePath)
-    Write-Host "Waiting for $targetName in $PromptsDir ..."
+    Write-ConsoleLine -Text "Waiting for $targetName in $PromptsDir ..." -Color Gray
 
     $watcher = New-Object IO.FileSystemWatcher $PromptsDir, $targetName
     $watcher.IncludeSubdirectories = $false
@@ -177,6 +192,126 @@ function Get-ThreadIdFromOutput {
     return $null
 }
 
+function Show-CodexEvents {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Lines
+    )
+
+    $startedCommands = @{}
+
+    foreach ($line in $Lines) {
+        $trim = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($trim)) {
+            continue
+        }
+
+        if (-not ($trim.StartsWith("{") -and $trim.EndsWith("}"))) {
+            if ($trim -match "(?i)\b(error|exception|failed|fatal)\b") {
+                Write-ConsoleLine -Text $trim -Color Red
+            }
+            elseif ($trim -match "(?i)\bwarn\b") {
+                Write-ConsoleLine -Text $trim -Color Yellow
+            }
+            continue
+        }
+
+        try {
+            $obj = $trim | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            continue
+        }
+
+        if ($obj.type -eq "item.completed" -and $obj.item) {
+            if ($obj.item.type -eq "reasoning" -and $obj.item.text) {
+                Write-ConsoleLine -Text ("[reasoning] {0}" -f $obj.item.text) -Color DarkGray
+                continue
+            }
+
+            if ($obj.item.type -eq "agent_message" -and $obj.item.text) {
+                Write-ConsoleLine -Text ("[agent] {0}" -f $obj.item.text) -Color Green
+                continue
+            }
+
+            if ($obj.item.type -eq "command_execution") {
+                $itemId = [string]$obj.item.id
+                $cmd = [string]$obj.item.command
+                $status = [string]$obj.item.status
+                $code = $obj.item.exit_code
+                if ($startedCommands.ContainsKey($itemId)) {
+                    if ($status -eq "completed") {
+                        Write-ConsoleLine -Text ("[command] (exit={0})" -f $code) -Color DarkGray
+                    }
+                    elseif ($status -eq "failed") {
+                        Write-ConsoleLine -Text ("[command] (failed, exit={0})" -f $code) -Color DarkGray
+                    }
+                    elseif ($status) {
+                        Write-ConsoleLine -Text ("[command] ({0})" -f $status) -Color DarkGray
+                    }
+                    else {
+                        Write-ConsoleLine -Text "[command]" -Color DarkGray
+                    }
+                }
+                else {
+                    if ($status -eq "completed") {
+                        Write-ConsoleLine -Text ("[command] {0} (exit={1})" -f $cmd, $code) -Color DarkGray
+                    }
+                    elseif ($status -eq "failed") {
+                        Write-ConsoleLine -Text ("[command] {0} (failed, exit={1})" -f $cmd, $code) -Color DarkGray
+                    }
+                    elseif ($status) {
+                        Write-ConsoleLine -Text ("[command] {0} ({1})" -f $cmd, $status) -Color DarkGray
+                    }
+                    else {
+                        Write-ConsoleLine -Text ("[command] {0}" -f $cmd) -Color DarkGray
+                    }
+                }
+
+                if ($obj.item.aggregated_output) {
+                    Write-ConsoleLine -Text ("[command-output] {0}" -f $obj.item.aggregated_output) -Color DarkYellow
+                }
+                continue
+            }
+        }
+
+        if ($obj.type -eq "item.started" -and $obj.item -and $obj.item.type -eq "command_execution") {
+            $itemId = [string]$obj.item.id
+            $cmd = [string]$obj.item.command
+            if ($itemId) {
+                $startedCommands[$itemId] = $true
+            }
+            Write-ConsoleLine -Text ("[command] {0} (in_progress)" -f $cmd) -Color DarkGray
+            continue
+        }
+
+        if ($obj.type -match "(?i)(error|failed)") {
+            Write-ConsoleLine -Text ("[error] {0}" -f $trim) -Color Red
+            continue
+        }
+    }
+}
+
+function Build-LoopPrompt {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UserPrompt
+    )
+
+    $rules = @'
+Loop execution rules (strict):
+- Process exactly one user prompt from this iteration.
+- For app launch/close tasks, execute action immediately, then do a quick verification.
+- If quick verification is negative or uncertain, wait at least 5 seconds and verify again before concluding failure.
+- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.
+- Keep the final answer concise.
+
+User prompt:
+'@
+
+    return "$rules`n$UserPrompt"
+}
+
 $state = Read-State
 $index = [int]$state.next_index
 $threadId = $state.thread_id
@@ -191,7 +326,7 @@ while ($true) {
     $resultName = "Promp_{0:D4}_Result.md" -f $index
     $resultPath = Join-Path $PromptsDir $resultName
 
-    Write-Host "Processing $promptName"
+    Write-ConsoleLine -Text "Processing $promptName" -Color Gray
 
     $header = @(
         "# Codex Result for $promptName",
@@ -201,7 +336,8 @@ while ($true) {
     )
     $header | Set-Content -Path $resultPath -Encoding UTF8
 
-    $promptText = Get-Content -Path $promptPath -Raw
+    $userPromptText = Get-Content -Path $promptPath -Raw
+    $promptText = Build-LoopPrompt -UserPrompt $userPromptText
     $usedResume = -not [string]::IsNullOrWhiteSpace($threadId)
 
     $cmdOutput = if ($usedResume) {
@@ -217,6 +353,7 @@ while ($true) {
     $exitCode = $LASTEXITCODE
 
     $cmdOutput | Tee-Object -FilePath $resultPath -Append | Out-Null
+    Show-CodexEvents -Lines $cmdOutput
 
     if ($exitCode -ne 0 -and $usedResume) {
         $resumeErr = ($cmdOutput -join "`n")
@@ -231,6 +368,7 @@ while ($true) {
 
             Add-Content -Path $resultPath -Encoding UTF8 -Value "`n--- Fallback: new session attempt ---`n"
             $cmdOutput | Tee-Object -FilePath $resultPath -Append | Out-Null
+            Show-CodexEvents -Lines $cmdOutput
         }
     }
 
