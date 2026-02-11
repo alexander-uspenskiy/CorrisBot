@@ -1,0 +1,5 @@
+# Runtime prompt queue and artifacts
+Prompts/
+
+# Ad-hoc test prompt files in repo root
+/Promp_*.md
