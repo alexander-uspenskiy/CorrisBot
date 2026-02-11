@@ -342,12 +342,12 @@ while ($true) {
 
     $cmdOutput = if ($usedResume) {
         $promptText |
-            & codex exec resume $threadId --skip-git-repo-check --json - 2>&1 |
+            & codex -C $Root exec resume $threadId --skip-git-repo-check --json - 2>&1 |
             ForEach-Object { $_.ToString() }
     }
     else {
         $promptText |
-            & codex exec --skip-git-repo-check --json - 2>&1 |
+            & codex -C $Root exec --skip-git-repo-check --json - 2>&1 |
             ForEach-Object { $_.ToString() }
     }
     $exitCode = $LASTEXITCODE
@@ -362,7 +362,7 @@ while ($true) {
             $threadId = $null
 
             $cmdOutput = $promptText |
-                & codex exec --skip-git-repo-check --json - 2>&1 |
+                & codex -C $Root exec --skip-git-repo-check --json - 2>&1 |
                 ForEach-Object { $_.ToString() }
             $exitCode = $LASTEXITCODE
 
