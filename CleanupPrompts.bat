@@ -45,5 +45,5 @@ if errorlevel 1 (
 )
 
 echo Cleanup completed.
-pause
+REM pause
 exit /b 0

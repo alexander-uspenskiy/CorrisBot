@@ -1,32 +1,39 @@
 # WT Launcher Usage
 
-## Quick start
-Run from `C:\CorrisBot\Looper`:
+## Launch contract (production)
+One call launches exactly one agent:
 
 ```bat
-StartLoopsInWT.bat
-```
-
-This uses `Plans\loops.wt.json`.
-
-Under the hood, `StartLoopsInWT.bat` calls:
-- `StartLoopsInWT.py`
-
-## Optional arguments
-```bat
-StartLoopsInWT.bat [config_path] [project_root_override] [--dry-run]
+StartLoopsInWT.bat <project_root> <agent_path>
 ```
 
 Examples:
 
 ```bat
-StartLoopsInWT.bat C:\CorrisBot\Looper\Plans\loops.wt.json
-StartLoopsInWT.bat C:\CorrisBot\Looper\Plans\loops.wt.json C:\CorrisBot\ProjectFolder_Template\.CorrisBot
-StartLoopsInWT.bat C:\CorrisBot\Looper\Plans\loops.wt.json C:\CorrisBot\ProjectFolder_Template\.CorrisBot --dry-run
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Orchestrator
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001
 ```
 
-## Notes
-- Launcher skips missing agent directories.
-- Launcher skips agents that are already running (anti-duplicate check).
-- Launcher sends fire-and-forget `wt` commands and does not wait for loop completion.
-- WT launcher is Python-only (`StartLoopsInWT.py`) with a `.bat` wrapper.
+Optional:
+
+```bat
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001 --dry-run
+```
+
+## Behavior
+- Starts one looper per launch request.
+- If the same agent is already running, launch is skipped.
+- Fills panes sequentially inside a tab up to `max_panes_per_tab`.
+- Opens a new tab when current tab is full.
+- Uses state file from config (default: `.CorrisBot\Temp\wt_layout_state.json`).
+
+## Config
+Layout config path:
+- `Plans\loops.wt.json`
+
+Current keys:
+- `window_name_template` (supports `{project}`)
+- `tab_name_prefix`
+- `max_panes_per_tab`
+- `split_sequence` (`-H`/`-V`)
+- `state_subpath`

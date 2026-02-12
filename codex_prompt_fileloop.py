@@ -290,7 +290,7 @@ class LoopRunner:
             "- For app launch/close tasks, execute action immediately, then do a quick verification.\n"
             "- If quick verification is negative or uncertain, wait at least 5 seconds and verify again before concluding failure.\n"
             "- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.\n"
-            "- If asked to launch another looper via CodexLoop.bat, use Windows Terminal fire-and-forget launch (wt new-tab/split-pane). Start once and do not wait, poll, retry, or terminate that looper in the same turn.\n"
+            "- If asked to launch another looper, use StartLoopsInWT.bat with exactly two args: <project_root> and <agent_path>. Start once (fire-and-forget) and do not call CodexLoop.bat directly.\n"
             "- Do not use internet/network resources (no web access, no API calls, no downloads).\n"
             "- Keep the final answer concise.\n\n"
             f"Sender ID: {sender_id}\n\n"

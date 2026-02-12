@@ -1,26 +1,7 @@
 {
-  "project_root": "C:\\CorrisBot\\ProjectFolder_Template\\.CorrisBot",
-  "windows": [
-    {
-      "name": "CorrisBot-Main",
-      "tabs": [
-        {
-          "name": "Core",
-          "panes": [
-            "Orchestrator",
-            "Talker",
-            "Executors\\Executor_001",
-            "Executors\\Executor_002"
-          ]
-        },
-        {
-          "name": "Exec-A",
-          "panes": [
-            "Executors\\Executor_003",
-            "Executors\\Executor_004"
-          ]
-        }
-      ]
-    }
-  ]
+  "window_name_template": "CorrisBot-{project}",
+  "tab_name_prefix": "Agents",
+  "max_panes_per_tab": 4,
+  "split_sequence": ["-H", "-V", "-H"],
+  "state_subpath": "Temp\\wt_layout_state.json"
 }
