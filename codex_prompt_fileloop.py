@@ -1,4 +1,5 @@
 import argparse
+import ctypes
 import json
 import os
 import re
@@ -9,6 +10,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+ANSI_COLORS = {
+    "gray": "\x1b[37m",
+    "yellow": "\x1b[33m",
+    "red": "\x1b[31m",
+    "green": "\x1b[32m",
+    "darkgray": "\x1b[90m",
+    "darkyellow": "\x1b[33;2m",
+}
+ANSI_RESET = "\x1b[0m"
 
 
 def now_str() -> str:
@@ -36,9 +47,30 @@ class LoopRunner:
         self.inbox_root.mkdir(parents=True, exist_ok=True)
         self.legacy_inbox_state_path = self.inbox_root / "loop_state.json"
         self.console_log_path = self.inbox_root / "Console.log"
+        self.ansi_enabled = self._try_enable_ansi()
 
-    def write_console_line(self, text: str) -> None:
-        print(text, flush=True)
+    @staticmethod
+    def _try_enable_ansi() -> bool:
+        if os.name != "nt":
+            return True
+        try:
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle, ctypes.byref(mode)) == 0:
+                return False
+            vt_mode = mode.value | 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            if kernel32.SetConsoleMode(handle, vt_mode) == 0:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def write_console_line(self, text: str, color: str = "gray") -> None:
+        if self.ansi_enabled and color in ANSI_COLORS:
+            print(f"{ANSI_COLORS[color]}{text}{ANSI_RESET}", flush=True)
+        else:
+            print(text, flush=True)
         line = f"[{now_str()}] {text}\n"
         with self.console_log_path.open("a", encoding="utf-8") as f:
             f.write(line)
@@ -76,6 +108,8 @@ class LoopRunner:
                 pass
             self.write_console_line(
                 f"[warning] Sender state is invalid JSON. Moved to '{corrupt_path}'. Starting sender state from empty."
+                ,
+                "yellow",
             )
             return None, 0, ""
 
@@ -121,6 +155,8 @@ class LoopRunner:
                 pass
             self.write_console_line(
                 f"[warning] Legacy inbox state is invalid JSON. Moved to '{corrupt_path}'. Ignoring it."
+                ,
+                "yellow",
             )
             return None, {}
 
@@ -174,80 +210,77 @@ class LoopRunner:
 
         return None
 
-    def show_codex_events(self, lines: list[str]) -> None:
-        started_commands: dict[str, bool] = {}
+    def process_codex_line(self, line: str, started_commands: dict[str, bool]) -> None:
+        trim = line.strip()
+        if not trim:
+            return
 
-        for line in lines:
-            trim = line.strip()
-            if not trim:
-                continue
+        if not (trim.startswith("{") and trim.endswith("}")):
+            if re.search(r"\b(error|exception|failed|fatal)\b", trim, flags=re.IGNORECASE):
+                self.write_console_line(trim, "red")
+            elif re.search(r"\bwarn\b", trim, flags=re.IGNORECASE):
+                self.write_console_line(trim, "yellow")
+            return
 
-            if not (trim.startswith("{") and trim.endswith("}")):
-                if re.search(r"\b(error|exception|failed|fatal)\b", trim, flags=re.IGNORECASE):
-                    self.write_console_line(trim)
-                elif re.search(r"\bwarn\b", trim, flags=re.IGNORECASE):
-                    self.write_console_line(trim)
-                continue
+        try:
+            obj = json.loads(trim)
+        except Exception:
+            return
 
-            try:
-                obj = json.loads(trim)
-            except Exception:
-                continue
+        if obj.get("type") == "item.completed" and obj.get("item"):
+            item = obj["item"]
+            item_type = item.get("type")
 
-            if obj.get("type") == "item.completed" and obj.get("item"):
-                item = obj["item"]
-                item_type = item.get("type")
+            if item_type == "reasoning" and item.get("text"):
+                self.write_console_line(f"[reasoning] {item['text']}", "darkgray")
+                return
 
-                if item_type == "reasoning" and item.get("text"):
-                    self.write_console_line(f"[reasoning] {item['text']}")
-                    continue
+            if item_type == "agent_message" and item.get("text"):
+                self.write_console_line(f"[agent] {item['text']}", "green")
+                return
 
-                if item_type == "agent_message" and item.get("text"):
-                    self.write_console_line(f"[agent] {item['text']}")
-                    continue
-
-                if item_type == "command_execution":
-                    item_id = str(item.get("id") or "")
-                    cmd = str(item.get("command") or "")
-                    status = str(item.get("status") or "")
-                    code = item.get("exit_code")
-
-                    if item_id and item_id in started_commands:
-                        if status == "completed":
-                            self.write_console_line(f"[command] (exit={code})")
-                        elif status == "failed":
-                            self.write_console_line(f"[command] (failed, exit={code})")
-                        elif status:
-                            self.write_console_line(f"[command] ({status})")
-                        else:
-                            self.write_console_line("[command]")
-                    else:
-                        if status == "completed":
-                            self.write_console_line(f"[command] {cmd} (exit={code})")
-                        elif status == "failed":
-                            self.write_console_line(f"[command] {cmd} (failed, exit={code})")
-                        elif status:
-                            self.write_console_line(f"[command] {cmd} ({status})")
-                        else:
-                            self.write_console_line(f"[command] {cmd}")
-
-                    aggregated_output = item.get("aggregated_output")
-                    if aggregated_output:
-                        self.write_console_line(f"[command-output] {aggregated_output}")
-                    continue
-
-            if obj.get("type") == "item.started" and obj.get("item", {}).get("type") == "command_execution":
-                item = obj["item"]
+            if item_type == "command_execution":
                 item_id = str(item.get("id") or "")
                 cmd = str(item.get("command") or "")
-                if item_id:
-                    started_commands[item_id] = True
-                self.write_console_line(f"[command] {cmd} (in_progress)")
-                continue
+                status = str(item.get("status") or "")
+                code = item.get("exit_code")
 
-            if re.search(r"(error|failed)", str(obj.get("type") or ""), flags=re.IGNORECASE):
-                self.write_console_line(f"[error] {trim}")
-                continue
+                if item_id and item_id in started_commands:
+                    if status == "completed":
+                        self.write_console_line(f"[command] (exit={code})", "darkgray")
+                    elif status == "failed":
+                        self.write_console_line(f"[command] (failed, exit={code})", "darkgray")
+                    elif status:
+                        self.write_console_line(f"[command] ({status})", "darkgray")
+                    else:
+                        self.write_console_line("[command]", "darkgray")
+                else:
+                    if status == "completed":
+                        self.write_console_line(f"[command] {cmd} (exit={code})", "darkgray")
+                    elif status == "failed":
+                        self.write_console_line(f"[command] {cmd} (failed, exit={code})", "darkgray")
+                    elif status:
+                        self.write_console_line(f"[command] {cmd} ({status})", "darkgray")
+                    else:
+                        self.write_console_line(f"[command] {cmd}", "darkgray")
+
+                aggregated_output = item.get("aggregated_output")
+                if aggregated_output:
+                    self.write_console_line(f"[command-output] {aggregated_output}", "darkyellow")
+                return
+
+        if obj.get("type") == "item.started" and obj.get("item", {}).get("type") == "command_execution":
+            item = obj["item"]
+            item_id = str(item.get("id") or "")
+            cmd = str(item.get("command") or "")
+            if item_id:
+                started_commands[item_id] = True
+            self.write_console_line(f"[command] {cmd} (in_progress)", "darkgray")
+            return
+
+        if re.search(r"(error|failed)", str(obj.get("type") or ""), flags=re.IGNORECASE):
+            self.write_console_line(f"[error] {trim}", "red")
+            return
 
     @staticmethod
     def build_loop_prompt(user_prompt: str, sender_id: str) -> str:
@@ -306,7 +339,7 @@ class LoopRunner:
             "(for example, C:\\Users\\<user>\\AppData\\Roaming\\npm\\codex.cmd)."
         )
 
-    def run_codex(self, prompt_text: str, thread_id: Optional[str]) -> tuple[list[str], int]:
+    def run_codex(self, prompt_text: str, thread_id: Optional[str], result_path: Path) -> tuple[list[str], int]:
         base_cmd = [self.codex_executable, "-C", str(self.executor_dir)]
         if self.dangerously_bypass_sandbox:
             base_cmd.append("--dangerously-bypass-approvals-and-sandbox")
@@ -333,22 +366,41 @@ class LoopRunner:
             ]
 
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                input=prompt_text,
                 text=True,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=self.executor_dir,
                 encoding="utf-8",
                 errors="replace",
+                bufsize=1,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(f"codex executable not found: {self.codex_executable}") from exc
 
-        output_text = proc.stdout or ""
-        lines = output_text.splitlines()
-        return lines, proc.returncode
+        lines: list[str] = []
+        started_commands: dict[str, bool] = {}
+        with result_path.open("a", encoding="utf-8") as result_file:
+            if proc.stdin:
+                try:
+                    proc.stdin.write(prompt_text)
+                    proc.stdin.close()
+                except (BrokenPipeError, OSError):
+                    # Process may exit before accepting stdin; continue collecting stdout/stderr.
+                    try:
+                        proc.stdin.close()
+                    except Exception:
+                        pass
+            if proc.stdout:
+                for raw_line in proc.stdout:
+                    line = raw_line.rstrip("\r\n")
+                    lines.append(line)
+                    result_file.write(raw_line)
+                    self.process_codex_line(line, started_commands)
+            return_code = proc.wait()
+        return lines, return_code
 
     def append_result_header(self, result_path: Path, prompt_name: str) -> None:
         header = (
@@ -442,9 +494,7 @@ class LoopRunner:
             prompt_text = self.build_loop_prompt(user_prompt_text, sender_id)
             used_resume = bool(thread_id and thread_id.strip())
 
-            lines, exit_code = self.run_codex(prompt_text, thread_id if used_resume else None)
-            self.append_lines(result_path, lines)
-            self.show_codex_events(lines)
+            lines, exit_code = self.run_codex(prompt_text, thread_id if used_resume else None, result_path)
 
             if exit_code != 0 and used_resume:
                 resume_err = "\n".join(lines)
@@ -458,10 +508,8 @@ class LoopRunner:
                     )
                     thread_id = None
 
-                    lines, exit_code = self.run_codex(prompt_text, None)
                     self.append_text(result_path, "\n--- Fallback: new session attempt ---\n\n")
-                    self.append_lines(result_path, lines)
-                    self.show_codex_events(lines)
+                    lines, exit_code = self.run_codex(prompt_text, None, result_path)
 
             if exit_code != 0:
                 self.append_text(result_path, f"\nCommand failed with exit code: {exit_code}\n")
@@ -484,7 +532,7 @@ class LoopRunner:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Loop: waits for Promp_XXXX.md files in executor inbox and processes them via codex."
+        description="Loop: waits for Promp_XXXX.md files in agent inbox and processes them via codex."
     )
     parser.add_argument(
         "--project-root",
@@ -492,9 +540,15 @@ def parse_args() -> argparse.Namespace:
         help="Path to .CorrisBot project root.",
     )
     parser.add_argument(
+        "--agent-path",
+        help=(
+            "Agent directory path. Can be absolute or relative to project root "
+            "(for example, Orchestrator or Executors/Executor_001)."
+        ),
+    )
+    parser.add_argument(
         "--executor-id",
-        required=True,
-        help="Executor directory name (for example, Executor_001).",
+        help="Legacy shortcut for agent path under Executors (for example, Executor_001).",
     )
     parser.add_argument(
         "--sandbox",
@@ -528,14 +582,25 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     project_root = Path(args.project_root).expanduser().resolve()
-    executor_dir = project_root / "Executors" / args.executor_id
-    inbox_root = executor_dir / "Prompts" / "Inbox"
+    if args.agent_path:
+        candidate = Path(args.agent_path).expanduser()
+        if candidate.is_absolute():
+            agent_dir = candidate.resolve()
+        else:
+            agent_dir = (project_root / candidate).resolve()
+    elif args.executor_id:
+        # Backward compatibility for older launchers.
+        agent_dir = (project_root / "Executors" / args.executor_id).resolve()
+    else:
+        raise RuntimeError("Either --agent-path or --executor-id must be provided.")
 
-    if not executor_dir.exists():
-        raise RuntimeError(f"Executor directory not found: {executor_dir}")
+    inbox_root = agent_dir / "Prompts" / "Inbox"
+
+    if not agent_dir.exists():
+        raise RuntimeError(f"Agent directory not found: {agent_dir}")
 
     runner = LoopRunner(
-        executor_dir=executor_dir,
+        executor_dir=agent_dir,
         inbox_root=inbox_root,
         sandbox_mode=args.sandbox,
         approval_policy=args.approval,
