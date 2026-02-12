@@ -1,5 +1,10 @@
 # Runtime prompt queue and artifacts
 Prompts/
 
+# Python
+__pycache__/
+
 # Ad-hoc test prompt files in repo root
 /Promp_*.md
+
+
