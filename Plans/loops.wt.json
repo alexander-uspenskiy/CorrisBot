@@ -1,0 +1,26 @@
+{
+  "project_root": "C:\\CorrisBot\\ProjectFolder_Template\\.CorrisBot",
+  "windows": [
+    {
+      "name": "CorrisBot-Main",
+      "tabs": [
+        {
+          "name": "Core",
+          "panes": [
+            "Orchestrator",
+            "Talker",
+            "Executors\\Executor_001",
+            "Executors\\Executor_002"
+          ]
+        },
+        {
+          "name": "Exec-A",
+          "panes": [
+            "Executors\\Executor_003",
+            "Executors\\Executor_004"
+          ]
+        }
+      ]
+    }
+  ]
+}
