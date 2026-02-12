@@ -5,11 +5,18 @@ rem Legacy launch (PowerShell):
 rem pwsh -ExecutionPolicy Bypass -File .\codex_prompt_fileloop.ps1
 
 if "%~1"=="" (
-  echo Usage: %~nx0 ^<exchange_dir^>
-  echo Example: %~nx0 C:\CorrisBot\Looper\Prompts
+  echo Usage: %~nx0 ^<project_root^> ^<executor_id^>
+  echo Example: %~nx0 C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executor_001
   pause
   exit /b 1
 )
 
-py -3 .\codex_prompt_fileloop.py --exchange-dir "%~1" --dangerously-bypass-sandbox
+if "%~2"=="" (
+  echo Usage: %~nx0 ^<project_root^> ^<executor_id^>
+  echo Example: %~nx0 C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executor_001
+  pause
+  exit /b 1
+)
+
+py -3 .\codex_prompt_fileloop.py --project-root "%~1" --executor-id "%~2" --dangerously-bypass-sandbox
 pause

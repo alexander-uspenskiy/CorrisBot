@@ -18,32 +18,56 @@ def now_str() -> str:
 class LoopRunner:
     def __init__(
         self,
-        root_dir: Path,
-        prompts_dir: Path,
+        executor_dir: Path,
+        inbox_root: Path,
         sandbox_mode: str,
         approval_policy: str,
         web_search_enabled: bool,
         dangerously_bypass_sandbox: bool,
         codex_bin: Optional[str],
     ) -> None:
-        self.root_dir = root_dir
-        self.prompts_dir = prompts_dir
+        self.executor_dir = executor_dir
+        self.inbox_root = inbox_root
         self.sandbox_mode = sandbox_mode
         self.approval_policy = approval_policy
         self.web_search_enabled = web_search_enabled
         self.dangerously_bypass_sandbox = dangerously_bypass_sandbox
         self.codex_executable = self.resolve_codex_executable(codex_bin)
-        self.prompts_dir.mkdir(parents=True, exist_ok=True)
-        self.state_path = self.prompts_dir / "loop_state.json"
-        self.console_log_path = self.prompts_dir / "Console.log"
+        self.inbox_root.mkdir(parents=True, exist_ok=True)
+        self.prompts_dir: Optional[Path] = None
+        self.state_path: Optional[Path] = None
+        self.console_log_path: Optional[Path] = None
 
     def write_console_line(self, text: str) -> None:
         print(text, flush=True)
-        line = f"[{now_str()}] {text}\n"
-        with self.console_log_path.open("a", encoding="utf-8") as f:
-            f.write(line)
+        if self.console_log_path:
+            line = f"[{now_str()}] {text}\n"
+            with self.console_log_path.open("a", encoding="utf-8") as f:
+                f.write(line)
+
+    def resolve_single_sender_prompts_dir(self) -> Path:
+        waiting_logged = False
+        while True:
+            sender_dirs = sorted(p for p in self.inbox_root.iterdir() if p.is_dir()) if self.inbox_root.exists() else []
+            if len(sender_dirs) == 1:
+                return sender_dirs[0]
+
+            if len(sender_dirs) > 1:
+                names = ", ".join(p.name for p in sender_dirs)
+                raise RuntimeError(
+                    "Multiple sender directories detected in Inbox. "
+                    "Current runner supports one sender only. "
+                    f"Found: {names}"
+                )
+
+            if not waiting_logged:
+                self.write_console_line(f"Waiting for sender directory in {self.inbox_root} ...")
+                waiting_logged = True
+            time.sleep(0.5)
 
     def read_state(self) -> tuple[Optional[str], int]:
+        if self.state_path is None:
+            raise RuntimeError("state_path is not initialized")
         if not self.state_path.exists():
             return None, 0
 
@@ -55,6 +79,8 @@ class LoopRunner:
             return thread_id, next_index
         except Exception:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if self.prompts_dir is None:
+                raise RuntimeError("prompts_dir is not initialized")
             corrupt_path = self.prompts_dir / f"loop_state.corrupt.{stamp}.json"
             try:
                 self.state_path.replace(corrupt_path)
@@ -66,6 +92,8 @@ class LoopRunner:
             return None, 0
 
     def write_state(self, thread_id: str, next_index: int) -> None:
+        if self.state_path is None:
+            raise RuntimeError("state_path is not initialized")
         payload = {
             "thread_id": thread_id,
             "next_index": next_index,
@@ -79,6 +107,8 @@ class LoopRunner:
         if file_path.exists():
             return
 
+        if self.prompts_dir is None:
+            raise RuntimeError("prompts_dir is not initialized")
         self.write_console_line(f"Waiting for {file_path.name} in {self.prompts_dir} ...")
         while not file_path.exists():
             time.sleep(0.5)
@@ -265,7 +295,7 @@ class LoopRunner:
         )
 
     def run_codex(self, prompt_text: str, thread_id: Optional[str]) -> tuple[list[str], int]:
-        base_cmd = [self.codex_executable, "-C", str(self.root_dir)]
+        base_cmd = [self.codex_executable, "-C", str(self.executor_dir)]
         if self.dangerously_bypass_sandbox:
             base_cmd.append("--dangerously-bypass-approvals-and-sandbox")
         else:
@@ -297,7 +327,7 @@ class LoopRunner:
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                cwd=self.root_dir,
+                cwd=self.executor_dir,
                 encoding="utf-8",
                 errors="replace",
             )
@@ -328,6 +358,11 @@ class LoopRunner:
             f.write(text)
 
     def run_forever(self) -> None:
+        self.prompts_dir = self.resolve_single_sender_prompts_dir()
+        self.state_path = self.prompts_dir / "loop_state.json"
+        self.console_log_path = self.prompts_dir / "Console.log"
+        self.write_console_line(f"Using sender directory: {self.prompts_dir}")
+
         thread_id, index = self.read_state()
 
         while True:
@@ -388,12 +423,17 @@ class LoopRunner:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Loop: waits for Promp_XXXX.md files in exchange directory and processes them via codex."
+        description="Loop: waits for Promp_XXXX.md files in executor inbox and processes them via codex."
     )
     parser.add_argument(
-        "--exchange-dir",
+        "--project-root",
         required=True,
-        help="Path to exchange directory where prompt/result/state files are stored.",
+        help="Path to .CorrisBot project root.",
+    )
+    parser.add_argument(
+        "--executor-id",
+        required=True,
+        help="Executor directory name (for example, Executor_001).",
     )
     parser.add_argument(
         "--sandbox",
@@ -426,12 +466,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    root = Path(__file__).resolve().parent
-    prompts_dir = Path(args.exchange_dir).expanduser().resolve()
+    project_root = Path(args.project_root).expanduser().resolve()
+    executor_dir = project_root / "Executors" / args.executor_id
+    inbox_root = executor_dir / "Prompts" / "Inbox"
+
+    if not executor_dir.exists():
+        raise RuntimeError(f"Executor directory not found: {executor_dir}")
 
     runner = LoopRunner(
-        root_dir=root,
-        prompts_dir=prompts_dir,
+        executor_dir=executor_dir,
+        inbox_root=inbox_root,
         sandbox_mode=args.sandbox,
         approval_policy=args.approval,
         web_search_enabled=args.allow_web_search,
