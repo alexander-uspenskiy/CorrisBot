@@ -85,6 +85,30 @@ def get_process_command_lines() -> list[str]:
     return []
 
 
+def get_powershell_executable() -> str:
+    return shutil.which("powershell") or shutil.which("pwsh") or ""
+
+
+def run_powershell_list(command: str) -> list[str]:
+    shell = get_powershell_executable()
+    if not shell:
+        return []
+    try:
+        proc = subprocess.run(
+            [shell, "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except Exception:
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+
+
 def test_agent_already_running(
     command_lines: list[str], project_root: Path, agent_path: str, agent_abs_path: Path
 ) -> bool:
@@ -102,16 +126,62 @@ def test_agent_already_running(
     return False
 
 
-def resolve_wt_executable() -> str:
-    found = shutil.which("wt.exe") or shutil.which("wt")
-    if found:
-        return found
+def resolve_wt_candidates() -> list[str]:
+    candidates: list[str] = []
+
+    for name in ("wt.exe", "wt"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+
     local_app_data = os.environ.get("LOCALAPPDATA", "")
     if local_app_data:
         fallback = Path(local_app_data) / "Microsoft" / "WindowsApps" / "wt.exe"
-        if fallback.is_file():
-            return str(fallback.resolve())
-    return ""
+        if fallback.exists():
+            candidates.append(str(fallback))
+
+    user_profile = os.environ.get("USERPROFILE", "")
+    if user_profile:
+        fallback = Path(user_profile) / "AppData" / "Local" / "Microsoft" / "WindowsApps" / "wt.exe"
+        if fallback.exists():
+            candidates.append(str(fallback))
+
+    ps_sources = run_powershell_list(
+        "(Get-Command wt -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)"
+    )
+    candidates.extend(ps_sources)
+
+    appx_locations = run_powershell_list(
+        "(Get-AppxPackage -Name Microsoft.WindowsTerminal* -ErrorAction SilentlyContinue | "
+        "Select-Object -ExpandProperty InstallLocation)"
+    )
+    for location in appx_locations:
+        candidates.append(str(Path(location) / "wt.exe"))
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = candidate.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def can_invoke_wt_alias() -> bool:
+    try:
+        probe = subprocess.run(
+            ["cmd", "/c", "wt", "-v"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+    except Exception:
+        return False
+    return probe.returncode == 0
 
 
 def convert_to_pane_spec(raw_pane: Any) -> tuple[str, str]:
@@ -177,7 +247,8 @@ def build_tab_arguments(
             print(f"[skip] Agent already running: {agent_path}")
             continue
 
-        pane_title = pane_title_raw or f"[{project_tag}] {tab_name} | {agent_path.replace(chr(92), '/')}"
+        agent_label = agent_path.replace(chr(92), "/")
+        pane_title = pane_title_raw or f"{agent_label} [{project_tag}/{tab_name}]"
         launchable.append((agent_path, pane_title))
         planned_launch_keys.add(key)
 
@@ -190,11 +261,25 @@ def build_tab_arguments(
     for idx, (agent_path, pane_title) in enumerate(launchable):
         loop_cmd = get_loop_invocation(loop_bat_path, project_root, agent_path)
         if idx == 0:
-            tab_args.extend(["new-tab", "--title", pane_title, "cmd", "/k", loop_cmd])
+            tab_args.extend(
+                ["new-tab", "--title", pane_title, "--suppressApplicationTitle", "cmd", "/k", loop_cmd]
+            )
             continue
         split_index += 1
         orientation = "-H" if split_index % 2 == 1 else "-V"
-        tab_args.extend([";", "split-pane", orientation, "--title", pane_title, "cmd", "/k", loop_cmd])
+        tab_args.extend(
+            [
+                ";",
+                "split-pane",
+                orientation,
+                "--title",
+                pane_title,
+                "--suppressApplicationTitle",
+                "cmd",
+                "/k",
+                loop_cmd,
+            ]
+        )
     return tab_args
 
 
@@ -220,13 +305,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    wt_exe = resolve_wt_executable()
-    if not wt_exe:
+    wt_candidates = resolve_wt_candidates()
+    alias_available = can_invoke_wt_alias()
+    if not wt_candidates and not alias_available:
         if args.dry_run:
             print("[warning] wt.exe was not found, running in dry-run with command preview only.")
-            wt_exe = "wt.exe"
         else:
-            raise RuntimeError("Windows Terminal command 'wt.exe' not found in PATH.")
+            raise RuntimeError(
+                "Windows Terminal command 'wt' is not available. "
+                "Install Windows Terminal or enable the App Execution Alias for wt.exe."
+            )
 
     config_path = Path(args.config_path).expanduser().resolve()
     if not config_path.is_file():
@@ -296,7 +384,26 @@ def main() -> int:
         if args.dry_run:
             print("[dry-run] wt " + format_args_for_display(window_args))
         else:
-            subprocess.Popen([wt_exe, *window_args], cwd=str(SCRIPT_DIR))
+            launched = False
+            last_error = ""
+            for wt_exe in wt_candidates:
+                try:
+                    subprocess.Popen([wt_exe, *window_args], cwd=str(SCRIPT_DIR))
+                    launched = True
+                    break
+                except OSError as exc:
+                    last_error = str(exc)
+
+            if not launched and alias_available:
+                try:
+                    subprocess.Popen(["cmd", "/c", "start", "", "wt", *window_args], cwd=str(SCRIPT_DIR))
+                    launched = True
+                except OSError as exc:
+                    last_error = str(exc)
+
+            if not launched:
+                raise RuntimeError(f"Failed to start Windows Terminal for '{window_name}': {last_error}")
+
             print(f"[ok] Launch command sent to WT window: {window_name}")
             time.sleep(0.15)
 
