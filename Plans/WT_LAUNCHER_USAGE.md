@@ -29,4 +29,4 @@ StartLoopsInWT.bat C:\CorrisBot\Looper\Plans\loops.wt.json C:\CorrisBot\ProjectF
 - Launcher skips missing agent directories.
 - Launcher skips agents that are already running (anti-duplicate check).
 - Launcher sends fire-and-forget `wt` commands and does not wait for loop completion.
-- Legacy script `StartLoopsInWT.ps1` remains in repo, but the active launcher path is Python.
+- WT launcher is Python-only (`StartLoopsInWT.py`) with a `.bat` wrapper.
