@@ -290,6 +290,7 @@ class LoopRunner:
             "- For app launch/close tasks, execute action immediately, then do a quick verification.\n"
             "- If quick verification is negative or uncertain, wait at least 5 seconds and verify again before concluding failure.\n"
             "- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.\n"
+            "- If asked to launch another looper via CodexLoop.bat, start it in a visible console window (use cmd start semantics, not hidden/background shell invocation).\n"
             "- Do not use internet/network resources (no web access, no API calls, no downloads).\n"
             "- Keep the final answer concise.\n\n"
             f"Sender ID: {sender_id}\n\n"
@@ -431,7 +432,7 @@ class LoopRunner:
                 _, next_index, _ = self.read_sender_state(sender_dir)
                 sender_next_index[sender_id] = next_index
             index = int(sender_next_index.get(sender_id, 0))
-            prompt_path = sender_dir / f"Promp_{index:04d}.md"
+            prompt_path = sender_dir / f"Prompt_{index:04d}.md"
             if prompt_path.exists():
                 try:
                     mtime = prompt_path.stat().st_mtime
@@ -484,7 +485,7 @@ class LoopRunner:
 
             self.wait_for_file_ready(prompt_path)
 
-            result_name = f"Promp_{index:04d}_Result.md"
+            result_name = f"Prompt_{index:04d}_Result.md"
             result_path = prompts_dir / result_name
 
             self.write_console_line(f"Processing {sender_id}/{prompt_name}")
@@ -532,7 +533,7 @@ class LoopRunner:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Loop: waits for Promp_XXXX.md files in agent inbox and processes them via codex."
+        description="Loop: waits for Prompt_XXXX.md files in agent inbox and processes them via codex."
     )
     parser.add_argument(
         "--project-root",
