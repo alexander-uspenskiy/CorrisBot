@@ -5,6 +5,6 @@ Prompts/
 __pycache__/
 
 # Ad-hoc test prompt files in repo root
-/Promp_*.md
+/Prompt_*.md
 
 

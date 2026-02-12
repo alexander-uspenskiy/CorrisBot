@@ -109,7 +109,7 @@ class LoopRunner:
             self.write_console_line(
                 f"[warning] Sender state is invalid JSON. Moved to '{corrupt_path}'. Starting sender state from empty."
                 ,
-                "yellow",
+                "darkgray",
             )
             return None, 0, ""
 
@@ -156,7 +156,7 @@ class LoopRunner:
             self.write_console_line(
                 f"[warning] Legacy inbox state is invalid JSON. Moved to '{corrupt_path}'. Ignoring it."
                 ,
-                "yellow",
+                "darkgray",
             )
             return None, {}
 
@@ -219,7 +219,7 @@ class LoopRunner:
             if re.search(r"\b(error|exception|failed|fatal)\b", trim, flags=re.IGNORECASE):
                 self.write_console_line(trim, "red")
             elif re.search(r"\bwarn\b", trim, flags=re.IGNORECASE):
-                self.write_console_line(trim, "yellow")
+                self.write_console_line(trim, "darkgray")
             return
 
         try:
@@ -266,7 +266,7 @@ class LoopRunner:
 
                 aggregated_output = item.get("aggregated_output")
                 if aggregated_output:
-                    self.write_console_line(f"[command-output] {aggregated_output}", "darkyellow")
+                    self.write_console_line(f"[command-output] {aggregated_output}", "darkgray")
                 return
 
         if obj.get("type") == "item.started" and obj.get("item", {}).get("type") == "command_execution":
@@ -383,6 +383,7 @@ class LoopRunner:
 
         lines: list[str] = []
         started_commands: dict[str, bool] = {}
+        saw_turn_completed = False
         with result_path.open("a", encoding="utf-8") as result_file:
             if proc.stdin:
                 try:
@@ -400,7 +401,32 @@ class LoopRunner:
                     lines.append(line)
                     result_file.write(raw_line)
                     self.process_codex_line(line, started_commands)
-            return_code = proc.wait()
+                    try:
+                        obj = json.loads(line)
+                        if obj.get("type") == "turn.completed":
+                            saw_turn_completed = True
+                            break
+                    except Exception:
+                        pass
+            if saw_turn_completed and proc.poll() is None:
+                # Turn is already complete; stop codex wrapper process tree so the loop can continue.
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+
+            if saw_turn_completed:
+                # After turn completion we treat this iteration as successful even if forced stop returned non-zero.
+                polled = proc.poll()
+                return_code = 0 if polled is None else (0 if polled != 0 else polled)
+            else:
+                return_code = proc.wait()
         return lines, return_code
 
     def append_result_header(self, result_path: Path, prompt_name: str) -> None:
@@ -447,6 +473,17 @@ class LoopRunner:
         _, sender_id, sender_dir, prompt_path, index = candidates[0]
         return sender_id, sender_dir, prompt_path, index
 
+    def get_waiting_prompt_paths(self, sender_next_index: dict[str, int]) -> list[Path]:
+        paths: list[Path] = []
+        for sender_dir in self.get_sender_dirs():
+            sender_id = sender_dir.name
+            if sender_id not in sender_next_index:
+                _, next_index, _ = self.read_sender_state(sender_dir)
+                sender_next_index[sender_id] = next_index
+            index = int(sender_next_index.get(sender_id, 0))
+            paths.append(sender_dir / f"Prompt_{index:04d}.md")
+        return paths
+
     def run_forever(self) -> None:
         self.write_console_line(f"Watching inbox root: {self.inbox_root}")
         sender_next_index: dict[str, int] = {}
@@ -473,13 +510,19 @@ class LoopRunner:
             picked = self.pick_next_prompt(sender_next_index)
             if picked is None:
                 if not waiting_logged:
-                    self.write_console_line(f"Waiting for next prompt in {self.inbox_root} ...")
+                    waiting_paths = self.get_waiting_prompt_paths(sender_next_index)
+                    if waiting_paths:
+                        for path in waiting_paths:
+                            self.write_console_line(f"Waiting: {path}", "darkyellow")
+                    else:
+                        self.write_console_line(f"Waiting: no sender directories in {self.inbox_root}", "darkyellow")
                     waiting_logged = True
                 time.sleep(0.5)
                 continue
 
             waiting_logged = False
             sender_id, sender_dir, prompt_path, index = picked
+            self.write_console_line(f"Selected: {prompt_path}", "yellow")
             prompts_dir = prompt_path.parent
             prompt_name = prompt_path.name
 
