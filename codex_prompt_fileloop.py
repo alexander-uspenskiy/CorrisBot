@@ -34,84 +34,95 @@ class LoopRunner:
         self.dangerously_bypass_sandbox = dangerously_bypass_sandbox
         self.codex_executable = self.resolve_codex_executable(codex_bin)
         self.inbox_root.mkdir(parents=True, exist_ok=True)
-        self.prompts_dir: Optional[Path] = None
-        self.state_path: Optional[Path] = None
-        self.console_log_path: Optional[Path] = None
+        self.legacy_inbox_state_path = self.inbox_root / "loop_state.json"
+        self.console_log_path = self.inbox_root / "Console.log"
 
     def write_console_line(self, text: str) -> None:
         print(text, flush=True)
-        if self.console_log_path:
-            line = f"[{now_str()}] {text}\n"
-            with self.console_log_path.open("a", encoding="utf-8") as f:
-                f.write(line)
+        line = f"[{now_str()}] {text}\n"
+        with self.console_log_path.open("a", encoding="utf-8") as f:
+            f.write(line)
 
-    def resolve_single_sender_prompts_dir(self) -> Path:
-        waiting_logged = False
-        while True:
-            sender_dirs = sorted(p for p in self.inbox_root.iterdir() if p.is_dir()) if self.inbox_root.exists() else []
-            if len(sender_dirs) == 1:
-                return sender_dirs[0]
+    def get_sender_dirs(self) -> list[Path]:
+        if not self.inbox_root.exists():
+            return []
+        return sorted(p for p in self.inbox_root.iterdir() if p.is_dir())
 
-            if len(sender_dirs) > 1:
-                names = ", ".join(p.name for p in sender_dirs)
-                raise RuntimeError(
-                    "Multiple sender directories detected in Inbox. "
-                    "Current runner supports one sender only. "
-                    f"Found: {names}"
-                )
+    @staticmethod
+    def _parse_next_index(obj: dict) -> int:
+        try:
+            return int(obj.get("next_index", 0))
+        except Exception:
+            return 0
 
-            if not waiting_logged:
-                self.write_console_line(f"Waiting for sender directory in {self.inbox_root} ...")
-                waiting_logged = True
-            time.sleep(0.5)
-
-    def read_state(self) -> tuple[Optional[str], int]:
-        if self.state_path is None:
-            raise RuntimeError("state_path is not initialized")
-        if not self.state_path.exists():
-            return None, 0
+    def read_sender_state(self, sender_dir: Path) -> tuple[Optional[str], int, str]:
+        state_path = sender_dir / "loop_state.json"
+        if not state_path.exists():
+            return None, 0, ""
 
         try:
-            raw = self.state_path.read_text(encoding="utf-8")
+            raw = state_path.read_text(encoding="utf-8")
             obj = json.loads(raw)
             thread_id = obj.get("thread_id")
-            next_index = int(obj.get("next_index", 0))
-            return thread_id, next_index
+            next_index = self._parse_next_index(obj)
+            updated_at = str(obj.get("updated_at") or "")
+            return thread_id, next_index, updated_at
         except Exception:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            if self.prompts_dir is None:
-                raise RuntimeError("prompts_dir is not initialized")
-            corrupt_path = self.prompts_dir / f"loop_state.corrupt.{stamp}.json"
+            corrupt_path = sender_dir / f"loop_state.corrupt.{stamp}.json"
             try:
-                self.state_path.replace(corrupt_path)
+                state_path.replace(corrupt_path)
             except Exception:
                 pass
             self.write_console_line(
-                f"[warning] State file is invalid JSON. Moved to '{corrupt_path}'. Starting with empty state."
+                f"[warning] Sender state is invalid JSON. Moved to '{corrupt_path}'. Starting sender state from empty."
             )
-            return None, 0
+            return None, 0, ""
 
-    def write_state(self, thread_id: str, next_index: int) -> None:
-        if self.state_path is None:
-            raise RuntimeError("state_path is not initialized")
+    def write_sender_state(self, sender_dir: Path, thread_id: Optional[str], next_index: int) -> None:
+        state_path = sender_dir / "loop_state.json"
         payload = {
             "thread_id": thread_id,
             "next_index": next_index,
             "updated_at": now_str(),
         }
-        tmp_path = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
+        tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        tmp_path.replace(self.state_path)
+        tmp_path.replace(state_path)
 
-    def wait_for_prompt_file(self, file_path: Path) -> None:
-        if file_path.exists():
-            return
+    def read_legacy_inbox_state(self) -> tuple[Optional[str], dict[str, int]]:
+        if not self.legacy_inbox_state_path.exists():
+            return None, {}
 
-        if self.prompts_dir is None:
-            raise RuntimeError("prompts_dir is not initialized")
-        self.write_console_line(f"Waiting for {file_path.name} in {self.prompts_dir} ...")
-        while not file_path.exists():
-            time.sleep(0.5)
+        try:
+            raw = self.legacy_inbox_state_path.read_text(encoding="utf-8")
+            obj = json.loads(raw)
+            thread_id = obj.get("thread_id")
+            sender_next_index: dict[str, int] = {}
+
+            if isinstance(obj.get("sender_next_index"), dict):
+                for sender, idx in obj["sender_next_index"].items():
+                    try:
+                        sender_next_index[str(sender)] = int(idx)
+                    except Exception:
+                        continue
+            elif "next_index" in obj:
+                sender_dirs = self.get_sender_dirs()
+                if len(sender_dirs) == 1:
+                    sender_next_index[sender_dirs[0].name] = int(obj.get("next_index", 0))
+
+            return thread_id, sender_next_index
+        except Exception:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            corrupt_path = self.inbox_root / f"loop_state.corrupt.{stamp}.json"
+            try:
+                self.legacy_inbox_state_path.replace(corrupt_path)
+            except Exception:
+                pass
+            self.write_console_line(
+                f"[warning] Legacy inbox state is invalid JSON. Moved to '{corrupt_path}'. Ignoring it."
+            )
+            return None, {}
 
     def wait_for_file_ready(self, file_path: Path) -> None:
         stable_rounds = 0
@@ -239,7 +250,7 @@ class LoopRunner:
                 continue
 
     @staticmethod
-    def build_loop_prompt(user_prompt: str) -> str:
+    def build_loop_prompt(user_prompt: str, sender_id: str) -> str:
         rules = (
             "Loop execution rules (strict):\n"
             "- Process exactly one user prompt from this iteration.\n"
@@ -248,6 +259,7 @@ class LoopRunner:
             "- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.\n"
             "- Do not use internet/network resources (no web access, no API calls, no downloads).\n"
             "- Keep the final answer concise.\n\n"
+            f"Sender ID: {sender_id}\n\n"
             "User prompt:\n"
         )
         return f"{rules}\n{user_prompt}"
@@ -357,29 +369,77 @@ class LoopRunner:
         with path.open("a", encoding="utf-8") as f:
             f.write(text)
 
-    def run_forever(self) -> None:
-        self.prompts_dir = self.resolve_single_sender_prompts_dir()
-        self.state_path = self.prompts_dir / "loop_state.json"
-        self.console_log_path = self.prompts_dir / "Console.log"
-        self.write_console_line(f"Using sender directory: {self.prompts_dir}")
+    def pick_next_prompt(
+        self, sender_next_index: dict[str, int]
+    ) -> Optional[tuple[str, Path, Path, int]]:
+        candidates: list[tuple[float, str, Path, Path, int]] = []
+        for sender_dir in self.get_sender_dirs():
+            sender_id = sender_dir.name
+            if sender_id not in sender_next_index:
+                _, next_index, _ = self.read_sender_state(sender_dir)
+                sender_next_index[sender_id] = next_index
+            index = int(sender_next_index.get(sender_id, 0))
+            prompt_path = sender_dir / f"Promp_{index:04d}.md"
+            if prompt_path.exists():
+                try:
+                    mtime = prompt_path.stat().st_mtime
+                except Exception:
+                    continue
+                candidates.append((mtime, sender_id, sender_dir, prompt_path, index))
 
-        thread_id, index = self.read_state()
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: (x[0], x[1]))
+        _, sender_id, sender_dir, prompt_path, index = candidates[0]
+        return sender_id, sender_dir, prompt_path, index
+
+    def run_forever(self) -> None:
+        self.write_console_line(f"Watching inbox root: {self.inbox_root}")
+        sender_next_index: dict[str, int] = {}
+        thread_id: Optional[str] = None
+        best_thread_updated_at = ""
+
+        for sender_dir in self.get_sender_dirs():
+            sender_id = sender_dir.name
+            state_thread_id, next_index, updated_at = self.read_sender_state(sender_dir)
+            sender_next_index[sender_id] = next_index
+            if state_thread_id and (not best_thread_updated_at or updated_at >= best_thread_updated_at):
+                thread_id = state_thread_id
+                best_thread_updated_at = updated_at
+
+        legacy_thread_id, legacy_next_map = self.read_legacy_inbox_state()
+        for sender_id, next_index in legacy_next_map.items():
+            sender_next_index.setdefault(sender_id, next_index)
+        if (not thread_id) and legacy_thread_id:
+            thread_id = legacy_thread_id
+
+        waiting_logged = False
 
         while True:
-            prompt_name = f"Promp_{index:04d}.md"
-            prompt_path = self.prompts_dir / prompt_name
+            picked = self.pick_next_prompt(sender_next_index)
+            if picked is None:
+                if not waiting_logged:
+                    self.write_console_line(f"Waiting for next prompt in {self.inbox_root} ...")
+                    waiting_logged = True
+                time.sleep(0.5)
+                continue
 
-            self.wait_for_prompt_file(prompt_path)
+            waiting_logged = False
+            sender_id, sender_dir, prompt_path, index = picked
+            prompts_dir = prompt_path.parent
+            prompt_name = prompt_path.name
+
             self.wait_for_file_ready(prompt_path)
 
             result_name = f"Promp_{index:04d}_Result.md"
-            result_path = self.prompts_dir / result_name
+            result_path = prompts_dir / result_name
 
-            self.write_console_line(f"Processing {prompt_name}")
+            self.write_console_line(f"Processing {sender_id}/{prompt_name}")
             self.append_result_header(result_path, prompt_name)
 
             user_prompt_text = prompt_path.read_text(encoding="utf-8")
-            prompt_text = self.build_loop_prompt(user_prompt_text)
+            prompt_text = self.build_loop_prompt(user_prompt_text, sender_id)
             used_resume = bool(thread_id and thread_id.strip())
 
             lines, exit_code = self.run_codex(prompt_text, thread_id if used_resume else None)
@@ -417,8 +477,9 @@ class LoopRunner:
 
             self.append_text(result_path, f"\nFinished: {now_str()}\n")
 
-            index += 1
-            self.write_state(thread_id, index)
+            next_index = index + 1
+            sender_next_index[sender_id] = next_index
+            self.write_sender_state(sender_dir, thread_id, next_index)
 
 
 def parse_args() -> argparse.Namespace:
