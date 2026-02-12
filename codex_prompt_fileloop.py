@@ -1,6 +1,8 @@
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -21,12 +23,16 @@ class LoopRunner:
         sandbox_mode: str,
         approval_policy: str,
         web_search_enabled: bool,
+        dangerously_bypass_sandbox: bool,
+        codex_bin: Optional[str],
     ) -> None:
         self.root_dir = root_dir
         self.prompts_dir = prompts_dir
         self.sandbox_mode = sandbox_mode
         self.approval_policy = approval_policy
         self.web_search_enabled = web_search_enabled
+        self.dangerously_bypass_sandbox = dangerously_bypass_sandbox
+        self.codex_executable = self.resolve_codex_executable(codex_bin)
         self.prompts_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = self.prompts_dir / "loop_state.json"
         self.console_log_path = self.prompts_dir / "Console.log"
@@ -216,16 +222,54 @@ class LoopRunner:
         )
         return f"{rules}\n{user_prompt}"
 
+    @staticmethod
+    def resolve_codex_executable(codex_bin: Optional[str]) -> str:
+        if codex_bin:
+            candidate = Path(codex_bin).expanduser()
+            if candidate.exists():
+                return str(candidate.resolve())
+            return codex_bin
+
+        candidates: list[str] = []
+        for name in ["codex", "codex.cmd", "codex.exe"]:
+            found = shutil.which(name)
+            if found:
+                candidates.append(found)
+
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            npm_cmd = Path(appdata) / "npm" / "codex.cmd"
+            if npm_cmd.exists():
+                candidates.append(str(npm_cmd))
+
+        vscode_ext_root = Path.home() / ".vscode" / "extensions"
+        if vscode_ext_root.exists():
+            vscode_bins = sorted(
+                vscode_ext_root.glob("openai.chatgpt-*-win32-x64/bin/windows-x86_64/codex.exe"),
+                reverse=True,
+            )
+            for bin_path in vscode_bins:
+                candidates.append(str(bin_path))
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = candidate.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            return candidate
+
+        raise RuntimeError(
+            "codex command was not found. Set PATH or pass --codex-bin with full path "
+            "(for example, C:\\Users\\<user>\\AppData\\Roaming\\npm\\codex.cmd)."
+        )
+
     def run_codex(self, prompt_text: str, thread_id: Optional[str]) -> tuple[list[str], int]:
-        base_cmd = [
-            "codex",
-            "-C",
-            str(self.root_dir),
-            "-a",
-            self.approval_policy,
-            "-s",
-            self.sandbox_mode,
-        ]
+        base_cmd = [self.codex_executable, "-C", str(self.root_dir)]
+        if self.dangerously_bypass_sandbox:
+            base_cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            base_cmd.extend(["-a", self.approval_policy, "-s", self.sandbox_mode])
         if not self.web_search_enabled:
             base_cmd.extend(["-c", "tools.web_search=false"])
 
@@ -258,7 +302,7 @@ class LoopRunner:
                 errors="replace",
             )
         except FileNotFoundError as exc:
-            raise RuntimeError("codex command was not found in PATH") from exc
+            raise RuntimeError(f"codex executable not found: {self.codex_executable}") from exc
 
         output_text = proc.stdout or ""
         lines = output_text.splitlines()
@@ -368,6 +412,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable Codex native web_search tool for this loop (disabled by default).",
     )
+    parser.add_argument(
+        "--dangerously-bypass-sandbox",
+        action="store_true",
+        help="Pass --dangerously-bypass-approvals-and-sandbox to codex.",
+    )
+    parser.add_argument(
+        "--codex-bin",
+        help="Optional explicit path to codex executable (.exe/.cmd).",
+    )
     return parser.parse_args()
 
 
@@ -382,6 +435,8 @@ def main() -> int:
         sandbox_mode=args.sandbox,
         approval_policy=args.approval,
         web_search_enabled=args.allow_web_search,
+        dangerously_bypass_sandbox=args.dangerously_bypass_sandbox,
+        codex_bin=args.codex_bin,
     )
     runner.run_forever()
     return 0
