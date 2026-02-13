@@ -1,7 +1,14 @@
 ## Project: Agent <-> Gateway Protocol
 
 This repo contains a “gateway” process that connects a chat channel (Telegram today, potentially Discord/WhatsApp/etc. later)
-to a local CLI agent (Codex by default). The agent runs on the local machine and can create/read files locally.
+to a Talker looper workflow (file-based prompt/result exchange).
+
+Current runtime model:
+- Gateway writes prompt files to Talker inbox: `C:\CorrisBot\Talker\Prompts\Inbox\<sender_id>\Prompt_<timestamp>.md`
+- Looper processes prompts and writes results to `*_Result.md`
+- Gateway streams selected looper events back to Telegram
+- Gateway saves user-uploaded attachments to `C:\CorrisBot\Talker\Prompts\Inbox\<sender_id>\Files\`
+- After saving an attachment, gateway sends an explicit system event prompt to Talker, so Talker is aware of the new file
 
 Important: When the user says “send it here”, “upload”, “share”, “give me the file”, etc. they mean:
 **deliver the file back to the user via the gateway channel**, not “copy into the working directory”.
@@ -18,6 +25,7 @@ DELIVER_FILE: <path>
 - `<path>` may be absolute or relative to the current WORKDIR.
 - The gateway will attempt to send that file back to the user through the current channel.
 - You can include multiple files by repeating the directive multiple times.
+- File delivery from agent replies is explicit-only: without `DELIVER_FILE`, gateway will not auto-send files.
 
 Examples:
 
@@ -44,5 +52,6 @@ For intermediate files, scripts, and other temporary artifacts, use the subdirec
 - Do not use `_Temp\` for files you intend to deliver to the user; use `DELIVER_FILE:` with a different path instead
 
 ### Notes
-- The agent is allowed to use full local capabilities (read/write/run) unless otherwise restricted by config.
-- The gateway is responsible for the actual delivery (Telegram/Discord/etc.) and for any later restrictions/guardrails.
+- The gateway is transport/orchestration glue; business logic should stay in Talker prompts/instructions.
+- The gateway is responsible for delivery (Telegram/Discord/etc.) and file ingestion from users.
+- The looper/agent side is responsible for deciding what to do with uploaded files and when to respond.
