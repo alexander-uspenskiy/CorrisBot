@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 # tg_codex_gateway.py
-# Telegram -> Agent CLI gateway (default: Codex CLI)
+# Telegram -> Talker Looper gateway
 #
 # Behavior:
 #   - Echo ALL incoming text messages to the console.
 #   - Bot commands (start with /) are handled by this script.
-#   - Any non-command text is forwarded to the CURRENT agent (default: "codex").
+#   - Any non-command text is forwarded to the CURRENT agent (default: "looper").
 #
-# Codex CLI behavior tweaks:
-#   1) Only send the assistant's FINAL message back to Telegram
-#      using `--output-last-message/-o` (so no CLI headers in Telegram).
-#   2) Keep "memory" across messages by resuming the previous exec session:
-#         first run:  codex exec ...
-#         next runs:  codex exec resume <SESSION_ID> ...
-#      (We persist the last seen Codex session id in this repo's ./sessions/* logs.)
-#   3) Log full stdout/stderr to console and to local log files for debugging.
+# Looper behavior:
+#   1) Gateway writes a prompt file into Talker inbox using atomic rename:
+#      temp file -> Prompt_YYYY_MM_DD_HH_MM_SS_mmm(.suffix).md
+#   2) Looper processes prompt and appends events to Prompt_..._Result.md
+#   3) Gateway polls that result file and streams meaningful events back to Telegram.
 #
 # Setup:
 #   1) Create a bot with @BotFather and get TELEGRAM_BOT_TOKEN
@@ -22,32 +19,39 @@
 #   3) Set env vars:
 #        - TELEGRAM_BOT_TOKEN
 #        - ALLOWED_CHAT_ID   (your numeric chat_id)
-#   4) Ensure Codex CLI is installed and available (try: codex --help)
+#   4) Ensure Looper launcher exists (StartLoopsInWT.bat) and Codex login is valid
 #
 # Telegram commands:
 #   /id                 -> show your chat_id
-#   /agent              -> show current agent name + whether resume memory is on
-#   /setagent <name>    -> set current agent (supported: codex)
+#   /agent              -> show current gateway/looper state
+#   /setagent <name>    -> set current agent (supported: looper)
 #   /run <text>         -> explicitly run text via current agent (same as plain text)
-#   /reset              -> start a fresh session (new file, no resume)
-#   /new_session        -> same as /reset
-#   /loginstatus        -> show Codex login status (only for codex agent)
+#   /reset_session      -> reset current sender queue/session
+#   /reset_all          -> reset all sender queues
+#   /reset              -> alias of /reset_session
+#   /new_session        -> alias of /reset_session
+#   /loginstatus        -> show Codex login status
 #   /console            -> show current console output mode
 #   /setconsole <mode>  -> set console mode: quiet (default) or full
 #   /toggleconsole      -> toggle between quiet and full console mode
 #   /help               -> list all available bot commands
 #
 # SECURITY:
-#   Only ALLOWED_CHAT_ID can run agent commands (/run, plain text forwarding, /setagent, /reset).
+#   Only ALLOWED_CHAT_ID can run agent commands (/run, plain text forwarding,
+#   /setagent, /reset*).
 #   /id is allowed for everyone (so you can discover chat_id), but is still echoed to console.
 
 import os
 import sys
+import json
+import time
+import uuid
 import atexit
 import asyncio
 import re
 import shutil
-from typing import List, Optional, Tuple
+import subprocess
+from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
 
 from telegram import Update
@@ -115,66 +119,12 @@ try:
 except ValueError:
   raise SystemExit("ALLOWED_CHAT_ID must be an integer")
 
-# --- Agent selection (in-memory). Default is Codex CLI. ---
-_CURRENT_AGENT = "codex"
+# --- Runtime agent mode ---
+_CURRENT_AGENT = "looper"
 
-# --- Session persistence for gateway logging + Codex session tracking ---
+# --- Session persistence for gateway logging ---
 _SESSION_DIR = os.path.join(os.getcwd(), "sessions")
 _CURRENT_SESSION_DIR = None  # Path to current active session directory (gateway logs)
-
-# IMPORTANT:
-# Codex CLI has its own local history store (~/.codex/sessions/*).
-# This gateway persists the last Codex session id (UUID) into ./sessions/<session_...>/codex_session_id.txt
-# and uses that exact id for `codex exec resume <id>`.
-_CODEX_SESSION_ID: Optional[str] = None
-# If True, the next Codex run MUST be fresh (`codex exec -`), even if a prior session exists.
-# This is how /reset guarantees a new Codex session, without disabling resume in general.
-_CODEX_FORCE_FRESH_NEXT_RUN = False
-
-def _codex_session_id_path(session_dir: Optional[str]) -> Optional[str]:
-  if not session_dir:
-    return None
-  return os.path.join(session_dir, "codex_session_id.txt")
-
-def _fresh_next_run_flag_path(session_dir: Optional[str]) -> Optional[str]:
-  if not session_dir:
-    return None
-  return os.path.join(session_dir, "force_fresh_next_run.flag")
-
-def _set_fresh_next_run_flag(session_dir: Optional[str], enabled: bool):
-  try:
-    p = _fresh_next_run_flag_path(session_dir)
-    if not p:
-      return
-    if enabled:
-      with open(p, "w", encoding="utf-8") as f:
-        f.write("1\n")
-    elif os.path.exists(p):
-      os.remove(p)
-  except Exception:
-    pass
-
-def _load_fresh_next_run_flag(session_dir: Optional[str]) -> bool:
-  try:
-    p = _fresh_next_run_flag_path(session_dir)
-    return bool(p and os.path.isfile(p))
-  except Exception:
-    return False
-
-def _load_codex_session_id(session_dir: Optional[str]) -> Optional[str]:
-  """Load the persisted Codex session id for a gateway session (if any)."""
-  try:
-    p = _codex_session_id_path(session_dir)
-    if not p or not os.path.isfile(p):
-      return None
-    with open(p, "r", encoding="utf-8", errors="replace") as f:
-      s = f.read().strip()
-    # Basic sanity: UUID-ish
-    if re.fullmatch(r"[0-9a-fA-F-]{16,64}", s or ""):
-      return s
-  except Exception:
-    pass
-  return None
 
 def _ensure_session_dir():
   """Create sessions directory if it doesn't exist."""
@@ -201,7 +151,6 @@ def _get_latest_session_dir() -> Optional[str]:
 def _get_git_version() -> str:
   """Get git commit hash if available, else 'unknown'."""
   try:
-    import subprocess
     result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], 
                            capture_output=True, text=True, timeout=5)
     if result.returncode == 0:
@@ -211,8 +160,8 @@ def _get_git_version() -> str:
   return "unknown"
 
 def _create_new_session_dir():
-  """Create a new session directory (called by /reset or /new_session)."""
-  global _CURRENT_SESSION_DIR, _CODEX_SESSION_ID
+  """Create a new session directory (gateway operational logs)."""
+  global _CURRENT_SESSION_DIR
   try:
     _ensure_session_dir()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -220,14 +169,15 @@ def _create_new_session_dir():
     _CURRENT_SESSION_DIR = os.path.join(_SESSION_DIR, session_name)
     os.makedirs(_CURRENT_SESSION_DIR, exist_ok=True)
     # Create metadata file with rich info
-    with open(os.path.join(_CURRENT_SESSION_DIR, "meta.txt"), "w") as f:
+    with open(os.path.join(_CURRENT_SESSION_DIR, "meta.txt"), "w", encoding="utf-8") as f:
       f.write(f"timestamp: {timestamp}\n")
       f.write(f"version: {_get_git_version()}\n")
       f.write(f"workdir: {os.getcwd()}\n")
       f.write(f"allowed_chat_id: {ALLOWED_CHAT_ID}\n")
       f.write(f"agent: {_CURRENT_AGENT}\n")
       f.write(f"console_mode: {_CONSOLE_MODE}\n")
-      f.write(f"codex_session_id_at_start: {_CODEX_SESSION_ID or ''}\n")
+      f.write(f"looper_root: {_LOOPER_ROOT}\n")
+      f.write(f"talker_root: {_TALKER_ROOT}\n")
   except Exception as e:
     print(f"[WARN] Failed to create session directory: {e}")
     _CURRENT_SESSION_DIR = None
@@ -240,18 +190,65 @@ def _get_session_log_paths() -> Tuple[Optional[str], Optional[str]]:
     return stdout_path, stderr_path
   return None, None
 
-# Ensure directory exists and load initial state
-_ensure_session_dir()
-_CURRENT_SESSION_DIR = _get_latest_session_dir()
-_CODEX_SESSION_ID = _load_codex_session_id(_CURRENT_SESSION_DIR)
-if _CURRENT_SESSION_DIR is None:
-  # Fresh install / first-ever boot: avoid `resume --last` failure when no prior Codex session exists.
-  _CODEX_FORCE_FRESH_NEXT_RUN = True
-else:
-  _CODEX_FORCE_FRESH_NEXT_RUN = _load_fresh_next_run_flag(_CURRENT_SESSION_DIR)
+# --- Looper/Talker configuration ---
+_LOOPER_ROOT = os.environ.get("LOOPER_ROOT", r"C:\CorrisBot\Looper").strip() or r"C:\CorrisBot\Looper"
+_TALKER_ROOT = os.environ.get("TALKER_ROOT", r"C:\CorrisBot\Talker").strip() or r"C:\CorrisBot\Talker"
+_TALKER_INBOX_ROOT = os.path.join(_TALKER_ROOT, "Prompts", "Inbox")
+_START_LOOPS_BAT = os.path.join(_LOOPER_ROOT, "StartLoopsInWT.bat")
+_SENDER_ID_OVERRIDE = os.environ.get("TALKER_SENDER_ID", "").strip()
+
+# Polling model (same style as looper: lightweight polling, no watchdog).
+_RESULT_POLL_ACTIVE_SEC = float(os.environ.get("RESULT_POLL_ACTIVE_SEC", "0.25"))
+_RESULT_POLL_IDLE_SEC = float(os.environ.get("RESULT_POLL_IDLE_SEC", "0.75"))
+_RESULT_START_TIMEOUT_SEC = float(os.environ.get("RESULT_START_TIMEOUT_SEC", "120"))
+_RESULT_TOTAL_TIMEOUT_SEC = float(os.environ.get("RESULT_TOTAL_TIMEOUT_SEC", "1800"))
+_RESULT_FINISHED_IDLE_SEC = float(os.environ.get("RESULT_FINISHED_IDLE_SEC", "1.0"))
+
+_PROMPT_TIMESTAMP_RE = re.compile(
+  r"^(?P<year>\d{4})_(?P<month>\d{2})_(?P<day>\d{2})_"
+  r"(?P<hour>\d{2})_(?P<minute>\d{2})_(?P<second>\d{2})_"
+  r"(?P<millis>\d{3})(?:_(?P<suffix>[A-Za-z0-9]+))?$"
+)
+
+_TALKER_LOOPER_STARTED = False
+
+def _ensure_talker_paths():
+  os.makedirs(_TALKER_INBOX_ROOT, exist_ok=True)
+
+def _ensure_talker_looper_started():
+  """Start Talker looper via StartLoopsInWT.bat (safe to call repeatedly)."""
+  global _TALKER_LOOPER_STARTED
+  _ensure_talker_paths()
+  if _TALKER_LOOPER_STARTED:
+    return
+  if not os.path.isfile(_START_LOOPS_BAT):
+    raise RuntimeError(f"Looper launcher not found: {_START_LOOPS_BAT}")
+
+  cmd = ["cmd", "/c", _START_LOOPS_BAT, _TALKER_ROOT]
+  print(f"[BOOT] launching looper: {cmd!r}")
+  proc = subprocess.run(
+    cmd,
+    cwd=_LOOPER_ROOT if os.path.isdir(_LOOPER_ROOT) else None,
+    capture_output=True,
+    text=True,
+    encoding="utf-8",
+    errors="replace",
+    timeout=60,
+    check=False,
+  )
+  if proc.returncode != 0:
+    detail = (proc.stderr or proc.stdout or "").strip()
+    raise RuntimeError(f"StartLoopsInWT failed (exit={proc.returncode}): {detail}")
+  _TALKER_LOOPER_STARTED = True
 
 # --- Console output mode: "quiet" (default) or "full" ---
 _CONSOLE_MODE = "full"
+
+# Ensure directory exists and load initial state
+_ensure_session_dir()
+_CURRENT_SESSION_DIR = _get_latest_session_dir()
+if _CURRENT_SESSION_DIR is None:
+  _create_new_session_dir()
 
 # --- File delivery settings ---
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB Telegram limit
@@ -266,7 +263,7 @@ def _clip(s: str, limit: int = 3500) -> str:
   # Telegram message limit is ~4096 chars; keep margin.
   if len(s) <= limit:
     return s
-  return s[:limit] + "\n…(truncated)"
+  return s[:limit] + "\n...(truncated)"
 
 def _echo_console(update: Update):
   chat = update.effective_chat
@@ -277,37 +274,68 @@ def _echo_console(update: Update):
   text = update.message.text if update.message else ""
   print(f"[TG] chat_id={chat_id} user={name} @{username} text={text!r}")
 
-def _append_log(path: str, text: str):
-  if not text:
+def _append_raw(path: Optional[str], text: str):
+  if not path or not text:
     return
-  ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-  with open(path, "a", encoding="utf-8", errors="replace") as f:
-    f.write(f"\n===== {ts} =====\n")
-    f.write(text)
-    f.write("\n")
-
-def _extract_codex_session_id(stdout: str, stderr: str) -> Optional[str]:
-  """
-  Best-effort extraction of Codex session UUID from CLI output.
-  Example line: 'session id: 019c493b-be30-7de0-a239-972d96f93990'
-  """
-  for blob in (stdout or "", stderr or ""):
-    m = re.search(r"(?im)^session id:\s*([0-9a-fA-F-]{16,64})\s*$", blob)
-    if m:
-      return m.group(1).strip()
-  return None
-
-def _persist_codex_session_id(session_id: str):
-  """Persist Codex session id for this gateway session so restarts resume the same session."""
-  global _CURRENT_SESSION_DIR
   try:
-    p = _codex_session_id_path(_CURRENT_SESSION_DIR)
-    if not p:
-      return
-    with open(p, "w", encoding="utf-8") as f:
-      f.write(session_id.strip() + "\n")
+    with open(path, "a", encoding="utf-8", errors="replace") as f:
+      f.write(text)
   except Exception:
     pass
+
+def _sanitize_sender_id(value: str) -> str:
+  s = re.sub(r"[^A-Za-z0-9._-]+", "_", (value or "").strip())
+  s = s.strip("._-")
+  if not s:
+    return "tg_unknown"
+  return s[:80]
+
+def _resolve_sender_id(update: Update) -> str:
+  if _SENDER_ID_OVERRIDE:
+    return _sanitize_sender_id(_SENDER_ID_OVERRIDE)
+  user = update.effective_user
+  if user and user.username:
+    return _sanitize_sender_id(f"tg_{user.username}")
+  if user:
+    return _sanitize_sender_id(f"tg_{user.id}")
+  return "tg_unknown"
+
+def _make_prompt_marker() -> str:
+  now = datetime.now()
+  millis = int(now.microsecond / 1000)
+  return now.strftime("%Y_%m_%d_%H_%M_%S_") + f"{millis:03d}"
+
+def _allocate_prompt_paths(sender_dir: str) -> Tuple[str, str, str]:
+  """Returns (marker, prompt_path, result_path), ensuring no collisions."""
+  os.makedirs(sender_dir, exist_ok=True)
+  base = _make_prompt_marker()
+  for attempt in range(0, 1000):
+    marker = base if attempt == 0 else f"{base}_t{attempt:03d}"
+    if _PROMPT_TIMESTAMP_RE.fullmatch(marker) is None:
+      continue
+    prompt_path = os.path.join(sender_dir, f"Prompt_{marker}.md")
+    result_path = os.path.join(sender_dir, f"Prompt_{marker}_Result.md")
+    if not os.path.exists(prompt_path) and not os.path.exists(result_path):
+      return marker, prompt_path, result_path
+  raise RuntimeError(f"Could not allocate unique prompt marker in {sender_dir}")
+
+def _write_prompt_atomic(prompt_path: str, text: str):
+  parent = os.path.dirname(prompt_path)
+  os.makedirs(parent, exist_ok=True)
+  tmp_name = f".tmp_{uuid.uuid4().hex}.part"
+  tmp_path = os.path.join(parent, tmp_name)
+  try:
+    with open(tmp_path, "w", encoding="utf-8", newline="\n") as f:
+      f.write(text)
+      if not text.endswith("\n"):
+        f.write("\n")
+    os.replace(tmp_path, prompt_path)
+  finally:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except Exception:
+      pass
 
 
 def _resolve_codex_path() -> str:
@@ -341,34 +369,79 @@ async def _stop_typing_task(stop_event: asyncio.Event, task: asyncio.Task):
   except asyncio.CancelledError:
     pass
 
-async def _pump_stream(stream, prefix: str, log_path: str, mode: str, stop_event: asyncio.Event, collector: list, buf_size: int = 10):
-  """Pump lines from stream to console (if full mode) and log file (buffered)."""
-  buffer = []
-  while not stop_event.is_set():
-    try:
-      line_b = await asyncio.wait_for(stream.readline(), timeout=0.5)
-      if not line_b:
-        break
-      line = line_b.decode("utf-8", errors="replace").rstrip("\n\r")
-      collector.append(line)
-      if mode == "full":
-        print(f"{prefix}{line}")
-      buffer.append(line)
-      if len(buffer) >= buf_size:
-        with open(log_path, "a", encoding="utf-8", errors="replace") as f:
-          f.write("\n".join(buffer) + "\n")
-        buffer.clear()
-    except asyncio.TimeoutError:
-      continue
-    except asyncio.CancelledError:
-      break
-    except Exception as e:
-      print(f"[WARN] Pump error: {e}")
-      break
-  # Flush remaining buffer
-  if buffer:
-    with open(log_path, "a", encoding="utf-8", errors="replace") as f:
-      f.write("\n".join(buffer) + "\n")
+def _process_looper_json_line(line: str, started_commands: Dict[str, bool]) -> Tuple[List[str], bool]:
+  """
+  Parse one JSON line from result stream.
+  Returns (messages_to_emit, saw_turn_completed).
+  """
+  try:
+    obj = json.loads(line)
+  except Exception:
+    return [], False
+
+  messages: List[str] = []
+  saw_turn_completed = False
+  obj_type = str(obj.get("type") or "")
+
+  if obj_type == "turn.completed":
+    saw_turn_completed = True
+
+  if obj_type == "item.started" and obj.get("item", {}).get("type") == "command_execution":
+    item = obj["item"]
+    item_id = str(item.get("id") or "")
+    cmd = str(item.get("command") or "")
+    if item_id:
+      started_commands[item_id] = True
+    messages.append(f"[command] {cmd} (in_progress)")
+    return messages, saw_turn_completed
+
+  if obj_type == "item.completed" and obj.get("item"):
+    item = obj["item"]
+    item_type = item.get("type")
+
+    if item_type == "reasoning" and item.get("text"):
+      messages.append(f"[reasoning] {item['text']}")
+      return messages, saw_turn_completed
+
+    if item_type == "agent_message" and item.get("text"):
+      messages.append(f"[agent]\n{item['text']}")
+      return messages, saw_turn_completed
+
+    if item_type == "command_execution":
+      item_id = str(item.get("id") or "")
+      cmd = str(item.get("command") or "")
+      status = str(item.get("status") or "")
+      code = item.get("exit_code")
+      started_before = bool(item_id and item_id in started_commands)
+
+      if started_before:
+        if status == "completed":
+          messages.append(f"[command] (exit={code})")
+        elif status == "failed":
+          messages.append(f"[command] (failed, exit={code})")
+        elif status:
+          messages.append(f"[command] ({status})")
+        else:
+          messages.append("[command]")
+      else:
+        if status == "completed":
+          messages.append(f"[command] {cmd} (exit={code})")
+        elif status == "failed":
+          messages.append(f"[command] {cmd} (failed, exit={code})")
+        elif status:
+          messages.append(f"[command] {cmd} ({status})")
+        else:
+          messages.append(f"[command] {cmd}")
+
+      aggregated_output = item.get("aggregated_output")
+      if aggregated_output:
+        messages.append(f"[command-output] {aggregated_output}")
+      return messages, saw_turn_completed
+
+  if re.search(r"(error|failed)", obj_type, flags=re.IGNORECASE):
+    messages.append(f"[error] {line}")
+
+  return messages, saw_turn_completed
 
 def _extract_deliver_files(text: str) -> Tuple[str, List[str]]:
   """
@@ -399,78 +472,183 @@ def _extract_deliver_files(text: str) -> Tuple[str, List[str]]:
   clean_text = "\n".join(clean_lines)
   return clean_text, paths
 
-async def _deliver_files(update: Update, paths: List[str]):
+async def _deliver_files(update: Update, paths: List[str], base_dir: Optional[str] = None,
+                         delivered_keys: Optional[Set[str]] = None):
   """
   Deliver files to Telegram chat.
-  Paths can be absolute or relative (resolved to WORKDIR).
+  Paths can be absolute or relative (resolved to base_dir, then CWD).
   """
   for raw_path in paths:
-    # Resolve path
     if os.path.isabs(raw_path):
       file_path = raw_path
     else:
-      file_path = os.path.join(os.getcwd(), raw_path)
-    
+      root = base_dir or os.getcwd()
+      file_path = os.path.join(root, raw_path)
+
     file_path = os.path.normpath(file_path)
+    key = file_path.lower()
+    if delivered_keys is not None and key in delivered_keys:
+      continue
     basename = os.path.basename(file_path)
-    
-    # Check file exists
+
     if not os.path.isfile(file_path):
       await update.message.reply_text(f"File not found: {raw_path}")
       continue
-    
-    # Check file size
+
     try:
       file_size = os.path.getsize(file_path)
     except Exception as e:
       await update.message.reply_text(f"Failed to check size: {raw_path} ({e})")
       continue
-    
+
     if file_size > _MAX_FILE_SIZE:
       await update.message.reply_text(f"File too large: {raw_path} ({file_size} bytes)")
       continue
-    
-    # Send file (with extended timeout for large files)
+
     try:
       with open(file_path, "rb") as f:
         await update.message.reply_document(document=f, filename=basename, read_timeout=600, write_timeout=600)
       await update.message.reply_text(f"Sent: {basename} ({file_size} bytes)")
+      if delivered_keys is not None:
+        delivered_keys.add(key)
     except Exception as e:
       await update.message.reply_text(f"Failed to send: {raw_path} ({e})")
 
-def _agent_cmd(agent: str, output_path: Optional[str]) -> List[str]:
-  # Keep this small & explicit. You can extend later (claude, etc.).
-  # Note: prompt is passed via stdin, not as command-line argument (to support multiline).
-  agent = (agent or "").strip().lower()
-  if agent == "codex":
-    codex_path = _resolve_codex_path()
+async def _emit_stream_messages(update: Update, messages: List[str], delivered_keys: Set[str]) -> bool:
+  emitted = False
+  for message in messages:
+    clean_text, file_paths = _extract_deliver_files(message)
+    if clean_text and clean_text.strip() != "[agent]":
+      await update.message.reply_text(_clip(clean_text))
+      emitted = True
+    if file_paths:
+      await _deliver_files(update, file_paths, base_dir=_TALKER_ROOT, delivered_keys=delivered_keys)
+      emitted = True
+  return emitted
 
-    # Always skip git repo check (your C:\CorrisBot may not be a git repo).
-    base = [codex_path, "exec", "--skip-git-repo-check"]
+async def _process_result_line(update: Update, line: str, started_commands: Dict[str, bool],
+                               delivered_keys: Set[str]) -> Tuple[bool, bool, bool]:
+  """
+  Process one result file line.
+  Returns (turn_completed, finished_line, emitted_anything).
+  """
+  trim = (line or "").strip()
+  if not trim:
+    return False, False, False
 
-    # Write assistant final message to a file (so we don't ship CLI headers to Telegram).
-    if output_path:
-      base += ["--output-last-message", output_path]
+  # Ignore markdown framing lines produced by looper result writer.
+  if trim.startswith("# Codex Result for ") or trim.startswith("Started: ") or trim.startswith("--- Fallback:"):
+    return False, False, False
 
-    global _CODEX_SESSION_ID, _CODEX_FORCE_FRESH_NEXT_RUN
+  if trim.startswith("{") and trim.endswith("}"):
+    messages, turn_completed = _process_looper_json_line(trim, started_commands)
+    emitted = await _emit_stream_messages(update, messages, delivered_keys)
+    if _CONSOLE_MODE == "full":
+      for msg in messages:
+        print(f"[stream] {msg}")
+    return turn_completed, False, emitted
 
-    if _CODEX_FORCE_FRESH_NEXT_RUN:
-      # /reset requested a fresh Codex session on the next run.
-      return base + ["-"]
+  # Non-JSON informational lines.
+  lowered = trim.lower()
+  finished_line = trim.startswith("Finished:")
+  messages = []
+  if finished_line:
+    messages.append(f"[done] {trim}")
+  elif trim.startswith("Command failed with exit code:"):
+    messages.append(f"[error] {trim}")
+  elif re.search(r"\b(error|exception|failed|fatal)\b", lowered):
+    messages.append(trim)
+  elif re.search(r"\bwarn\b", lowered):
+    messages.append(trim)
 
-    if _CODEX_SESSION_ID:
-      # Continue the exact previous Codex session id (more reliable than resume --last).
-      # Note: "-" tells codex to read prompt from stdin
-      return base + ["resume", _CODEX_SESSION_ID, "-"]
+  emitted = await _emit_stream_messages(update, messages, delivered_keys)
+  if _CONSOLE_MODE == "full":
+    for msg in messages:
+      print(f"[stream] {msg}")
+  return False, finished_line, emitted
 
-    # Backward-compatible fallback: if we haven't recorded an id yet, behave like the old gateway:
-    # try to resume the most recent session for this cwd.
-    return base + ["resume", "--last", "-"]
+async def _stream_result_file(update: Update, result_path: str, session_stdout_path: Optional[str]) -> Tuple[bool, bool]:
+  """
+  Poll one result file and stream appended events.
+  Returns (completed, emitted_any_output).
+  """
+  start_time = time.monotonic()
+  last_change_time = start_time
+  seen_file = False
+  seen_turn_completed = False
+  seen_finished_line = False
+  emitted_any = False
+  offset = 0
+  pending = ""
+  started_commands: Dict[str, bool] = {}
+  delivered_keys: Set[str] = set()
 
-  raise ValueError(f"Unknown agent: {agent}")
+  while True:
+    now = time.monotonic()
+    if os.path.isfile(result_path):
+      seen_file = True
+      try:
+        with open(result_path, "r", encoding="utf-8", errors="replace") as f:
+          f.seek(offset)
+          chunk = f.read()
+          offset = f.tell()
+      except Exception:
+        chunk = ""
 
-def _append_run_log(event: str, update: Update, prompt_len: int = 0, cmd: List[str] = None, 
-                     exit_code: int = None, timeout_killed: bool = False, duration_ms: int = None):
+      if chunk:
+        last_change_time = now
+        _append_raw(session_stdout_path, chunk)
+        pending += chunk
+
+        while True:
+          nl = pending.find("\n")
+          if nl < 0:
+            break
+          raw_line = pending[:nl].rstrip("\r")
+          pending = pending[nl + 1:]
+
+          turn_completed, finished_line, emitted = await _process_result_line(
+            update, raw_line, started_commands, delivered_keys
+          )
+          seen_turn_completed = seen_turn_completed or turn_completed
+          seen_finished_line = seen_finished_line or finished_line
+          emitted_any = emitted_any or emitted
+          # Fail-fast terminal state for looper hard failure line.
+          if raw_line.strip().startswith("Command failed with exit code:"):
+            return False, emitted_any
+
+    if seen_turn_completed:
+      if pending.strip():
+        _, _, emitted = await _process_result_line(
+          update, pending.rstrip("\r"), started_commands, delivered_keys
+        )
+        emitted_any = emitted_any or emitted
+      return True, emitted_any
+
+    if not seen_file:
+      if now - start_time > _RESULT_START_TIMEOUT_SEC:
+        await update.message.reply_text(f"Timeout waiting for result file ({int(_RESULT_START_TIMEOUT_SEC)}s).")
+        return False, emitted_any
+      await asyncio.sleep(max(0.05, _RESULT_POLL_IDLE_SEC))
+      continue
+
+    if seen_finished_line and (now - last_change_time) >= _RESULT_FINISHED_IDLE_SEC:
+      if pending.strip():
+        _, _, emitted = await _process_result_line(
+          update, pending.rstrip("\r"), started_commands, delivered_keys
+        )
+        emitted_any = emitted_any or emitted
+      return True, emitted_any
+
+    if now - start_time > _RESULT_TOTAL_TIMEOUT_SEC:
+      await update.message.reply_text(f"Timeout waiting for completion ({int(_RESULT_TOTAL_TIMEOUT_SEC)}s).")
+      return False, emitted_any
+
+    await asyncio.sleep(max(0.05, _RESULT_POLL_ACTIVE_SEC))
+
+def _append_run_log(event: str, update: Update, prompt_len: int = 0, cmd: Optional[List[str]] = None,
+                    exit_code: Optional[int] = None, timeout_killed: bool = False,
+                    duration_ms: Optional[int] = None):
   """Append a line to the session run.log."""
   if not _CURRENT_SESSION_DIR:
     return
@@ -495,166 +673,192 @@ def _append_run_log(event: str, update: Update, prompt_len: int = 0, cmd: List[s
   except Exception:
     pass
 
+def _validate_reset_scope():
+  """
+  Safety guard: reset operations are allowed only inside TALKER_ROOT/Prompts/Inbox.
+  """
+  inbox_abs = os.path.abspath(_TALKER_INBOX_ROOT)
+  talker_abs = os.path.abspath(_TALKER_ROOT)
+  try:
+    common = os.path.commonpath([inbox_abs, talker_abs])
+  except ValueError:
+    raise RuntimeError(f"Unsafe reset scope (different drives): inbox={inbox_abs} talker={talker_abs}")
+  if os.path.normcase(common) != os.path.normcase(talker_abs):
+    raise RuntimeError(f"Unsafe reset scope (inbox outside talker root): {inbox_abs}")
+
+  rel = os.path.relpath(inbox_abs, talker_abs)
+  parts = [p for p in rel.split(os.sep) if p not in ("", ".")]
+  if len(parts) != 2 or os.path.normcase(parts[0]) != "prompts" or os.path.normcase(parts[1]) != "inbox":
+    raise RuntimeError(f"Unsafe reset scope (expected Talker/Prompts/Inbox): {inbox_abs}")
+
+def _is_prompt_artifact_name(name: str) -> bool:
+  """
+  Strictly match Looper prompt/result markdown files:
+    Prompt_<timestamp>[ _suffix].md
+    Prompt_<timestamp>[ _suffix]_Result.md
+  """
+  if not (name.startswith("Prompt_") and name.endswith(".md")):
+    return False
+
+  body = name[len("Prompt_"):-len(".md")]
+  if body.endswith("_Result"):
+    marker = body[:-len("_Result")]
+  else:
+    marker = body
+  return _PROMPT_TIMESTAMP_RE.fullmatch(marker) is not None
+
+def _ensure_sender_dir_in_scope(sender_dir: str):
+  """
+  Safety guard: sender_dir must stay inside inbox even after resolving links.
+  """
+  inbox_abs = os.path.abspath(_TALKER_INBOX_ROOT)
+  sender_abs = os.path.abspath(sender_dir)
+  try:
+    common_abs = os.path.commonpath([sender_abs, inbox_abs])
+  except ValueError:
+    raise RuntimeError(f"Unsafe sender dir (different drives): {sender_abs}")
+  if os.path.normcase(common_abs) != os.path.normcase(inbox_abs):
+    raise RuntimeError(f"Unsafe sender dir (outside inbox): {sender_abs}")
+
+  inbox_real = os.path.realpath(_TALKER_INBOX_ROOT)
+  sender_real = os.path.realpath(sender_dir)
+  try:
+    common_real = os.path.commonpath([sender_real, inbox_real])
+  except ValueError:
+    raise RuntimeError(f"Unsafe sender dir (different realpath drives): {sender_real}")
+  if os.path.normcase(common_real) != os.path.normcase(inbox_real):
+    raise RuntimeError(f"Unsafe sender dir (resolved outside inbox): {sender_real}")
+
+def _clear_sender_artifacts(sender_dir: str) -> int:
+  """
+  Remove only known queue/session artifacts. Keep directories and unrelated files.
+  """
+  _ensure_sender_dir_in_scope(sender_dir)
+  removed = 0
+  try:
+    names = os.listdir(sender_dir)
+  except Exception:
+    return 0
+
+  for name in names:
+    should_remove = False
+    if name == "loop_state.json":
+      should_remove = True
+    elif re.fullmatch(r"loop_state\.corrupt\..+\.json", name):
+      should_remove = True
+    elif name.startswith(".tmp_") and name.endswith(".part"):
+      should_remove = True
+    elif name.endswith(".tmp"):
+      should_remove = True
+    elif _is_prompt_artifact_name(name):
+      should_remove = True
+
+    if not should_remove:
+      continue
+
+    path = os.path.join(sender_dir, name)
+    if not os.path.isfile(path):
+      continue
+    try:
+      os.remove(path)
+      removed += 1
+    except Exception:
+      pass
+  return removed
+
+def _reset_sender_dir(sender_id: str) -> int:
+  _validate_reset_scope()
+  sender_dir = os.path.join(_TALKER_INBOX_ROOT, sender_id)
+  os.makedirs(sender_dir, exist_ok=True)
+  return _clear_sender_artifacts(sender_dir)
+
+def _reset_all_sender_dirs() -> Tuple[int, int]:
+  _validate_reset_scope()
+  _ensure_talker_paths()
+  sender_count = 0
+  removed_files = 0
+  for name in os.listdir(_TALKER_INBOX_ROOT):
+    path = os.path.join(_TALKER_INBOX_ROOT, name)
+    if not os.path.isdir(path):
+      continue
+    sender_count += 1
+    removed_files += _clear_sender_artifacts(path)
+  return sender_count, removed_files
+
 async def _run_agent(update: Update, prompt: str):
-  global _CURRENT_AGENT, _CODEX_SESSION_ID, _CODEX_FORCE_FRESH_NEXT_RUN, _CURRENT_SESSION_DIR
+  global _CURRENT_AGENT, _CURRENT_SESSION_DIR
 
   prompt = (prompt or "").strip()
   if not prompt:
     await update.message.reply_text("Empty prompt.")
     return
 
-  # Concurrency protection: non-blocking acquire (Policy A: reject while busy)
+  # Concurrency protection: non-blocking acquire.
   try:
     await asyncio.wait_for(_RUN_LOCK.acquire(), timeout=0.001)
   except asyncio.TimeoutError:
     await update.message.reply_text("Busy. Try again in a moment.")
     return
 
-  # Ensure we have a session directory (create if none exists)
   if _CURRENT_SESSION_DIR is None:
     _create_new_session_dir()
 
   run_start_time = datetime.now()
+  completed = False
   timeout_killed = False
-  
+  session_stderr_path: Optional[str] = None
+
+  stop_typing = asyncio.Event()
+  typing_task = asyncio.create_task(_typing_loop(update.effective_chat, stop_typing))
+
   try:
-    # Get session-specific log paths
+    try:
+      await asyncio.to_thread(_ensure_talker_looper_started)
+    except Exception as e:
+      await update.message.reply_text(f"Failed to start Talker looper: {e}")
+      return
+
     session_stdout_path, session_stderr_path = _get_session_log_paths()
     if not session_stdout_path or not session_stderr_path:
-      # Fallback to temp paths if session creation failed
       session_stdout_path = os.path.join(os.getcwd(), "_temp_stdout.log")
       session_stderr_path = os.path.join(os.getcwd(), "_temp_stderr.log")
 
-    # A per-run output file for the "final assistant message"
-    out_file = os.path.join(os.getcwd(), "_tg_last_message.txt")
-    try:
-      if os.path.exists(out_file):
-        os.remove(out_file)
-    except Exception:
-      pass
+    sender_id = _resolve_sender_id(update)
+    sender_dir = os.path.join(_TALKER_INBOX_ROOT, sender_id)
+    marker, prompt_path, result_path = _allocate_prompt_paths(sender_dir)
+    _write_prompt_atomic(prompt_path, prompt)
 
-    cmd = _agent_cmd(_CURRENT_AGENT, out_file)
-    print(f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} session={os.path.basename(_CURRENT_SESSION_DIR or 'none')} exec={cmd!r}")
-    
-    # Log run start
-    _append_run_log("START", update, len(prompt), cmd)
+    run_cmd = ["looper_publish", f"sender={sender_id}", prompt_path]
+    print(
+      f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} "
+      f"session={os.path.basename(_CURRENT_SESSION_DIR or 'none')} marker={marker} sender={sender_id}"
+    )
+    _append_run_log("START", update, len(prompt), run_cmd)
 
-    # Start typing indicator loop
-    stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_typing_loop(update.effective_chat, stop_typing))
+    _append_raw(session_stdout_path, f"\n=== Prompt marker: {marker} sender={sender_id} ===\n")
+    _append_raw(session_stdout_path, f"Prompt file: {prompt_path}\n")
+    _append_raw(session_stdout_path, f"Result file: {result_path}\n")
 
-    proc = None
-    stdout_lines = []
-    stderr_lines = []
-    stop_pump = asyncio.Event()
-    stdout_task = None
-    stderr_task = None
-    try:
-      proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-      )
-
-      # Start pump tasks for streaming output (session-specific logs)
-      stdout_task = asyncio.create_task(_pump_stream(proc.stdout, "[codex:out] ", session_stdout_path, _CONSOLE_MODE, stop_pump, stdout_lines))
-      stderr_task = asyncio.create_task(_pump_stream(proc.stderr, "[codex:err] ", session_stderr_path, _CONSOLE_MODE, stop_pump, stderr_lines))
-
-      # Send prompt via stdin (supports multiline), then wait for process
-      try:
-        proc.stdin.write(prompt.encode("utf-8"))
-        await proc.stdin.drain()
-        proc.stdin.close()
-        await asyncio.wait_for(proc.wait(), timeout=600)  # 10 minutes
-      except asyncio.TimeoutError:
-        timeout_killed = True
-        proc.kill()
-        stop_pump.set()
-        for task in (stdout_task, stderr_task):
-          task.cancel()
-          try:
-            await task
-          except asyncio.CancelledError:
-            pass
-        # Wait for process to actually exit so returncode is defined
-        try:
-          await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.TimeoutError:
-          pass
-        await update.message.reply_text("Timeout (600s). Killed.")
-        print("[RUN] timeout (600s) -> killed")
-        # Will exit after finally block below
-
-      # Stop pump tasks
-      stop_pump.set()
-      for task in (stdout_task, stderr_task):
-        task.cancel()
-        try:
-          await task
-        except asyncio.CancelledError:
-          pass
-
-    except FileNotFoundError:
-      await update.message.reply_text(f"Cannot find '{cmd[0]}' in PATH. Try `{cmd[0]} --help` in terminal.")
-      return
-    finally:
-      await _stop_typing_task(stop_typing, typing_task)
-
-    # If timed out, exit now (END logging and lock release will happen in outer finally)
-    if timeout_killed:
-      return
-
-    # Use collected output for Telegram response
-    stdout = "\n".join(stdout_lines)
-    stderr = "\n".join(stderr_lines)
-
-    print(f"[RUN] exit_code={proc.returncode} stdout_len={len(stdout)} stderr_len={len(stderr)}")
-
-    # If codex succeeded, capture/persist the session id so future messages resume reliably.
-    if _CURRENT_AGENT == "codex" and proc.returncode == 0:
-      _CODEX_FORCE_FRESH_NEXT_RUN = False
-      _set_fresh_next_run_flag(_CURRENT_SESSION_DIR, False)
-      sid = _extract_codex_session_id(stdout, stderr)
-      if sid and sid != _CODEX_SESSION_ID:
-        _CODEX_SESSION_ID = sid
-        _persist_codex_session_id(sid)
-
-    # Prefer the "final assistant message" written by codex.
-    final_msg = ""
-    try:
-      if os.path.exists(out_file):
-        with open(out_file, "r", encoding="utf-8", errors="replace") as f:
-          final_msg = f.read().strip()
-    except Exception:
-      final_msg = ""
-
-    # 1) Process final message: extract file delivery directives and send clean text
-    if final_msg:
-      clean_text, file_paths = _extract_deliver_files(final_msg)
-      if clean_text:
-        await update.message.reply_text(_clip(clean_text))
-      # Deliver files if any directives found
-      if file_paths:
-        await _deliver_files(update, file_paths)
-    else:
-      # Fallback: if no out_file produced anything, use stdout (usually still cleaner than stderr)
-      if stdout:
-        await update.message.reply_text(_clip(stdout))
-
-    # 2) Only surface stderr to Telegram when something failed.
-    if proc.returncode != 0 and stderr:
-      await update.message.reply_text("stderr:\n" + _clip(stderr))
-
-    # 3) If absolutely nothing came out, at least report exit code.
-    if not final_msg and not stdout and (proc.returncode == 0) and not stderr:
-      await update.message.reply_text(f"Done. exit_code={proc.returncode}")
+    completed, emitted_any = await _stream_result_file(update, result_path, session_stdout_path)
+    if not emitted_any and completed:
+      await update.message.reply_text("Done.")
+    if not completed:
+      timeout_killed = True
+      _append_raw(session_stderr_path, f"[WARN] Stream did not complete for marker={marker}\n")
+  except Exception as e:
+    _append_raw(session_stderr_path, f"[ERROR] _run_agent failed: {e}\n")
+    await update.message.reply_text(f"Run failed: {e}")
   finally:
-    # Log run end (always executed, even on timeout)
+    await _stop_typing_task(stop_typing, typing_task)
     duration_ms = int((datetime.now() - run_start_time).total_seconds() * 1000)
-    exit_code = -1 if timeout_killed else (proc.returncode if proc else -1)
-    _append_run_log("END", update, exit_code=exit_code, 
-                    timeout_killed=timeout_killed, duration_ms=duration_ms)
+    exit_code = 0 if completed else 1
+    _append_run_log(
+      "END",
+      update,
+      exit_code=exit_code,
+      timeout_killed=timeout_killed,
+      duration_ms=duration_ms,
+    )
     _RUN_LOCK.release()
 
 # --- Telegram handlers ---
@@ -668,16 +872,20 @@ async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
-  
   if not _is_allowed(update):
     await update.message.reply_text("Access denied.")
     return
-  
-  mem = "off"
-  if _CURRENT_AGENT == "codex" and not _CODEX_FORCE_FRESH_NEXT_RUN:
-    mem = "on"
-  sid = _CODEX_SESSION_ID or ""
-  await update.message.reply_text(f"current_agent = {_CURRENT_AGENT}\nresume_memory = {mem}\ncodex_session_id = {sid}")
+
+  sender_id = _resolve_sender_id(update)
+  await update.message.reply_text(
+    f"current_agent = {_CURRENT_AGENT}\n"
+    f"looper_root = {_LOOPER_ROOT}\n"
+    f"talker_root = {_TALKER_ROOT}\n"
+    f"inbox_root = {_TALKER_INBOX_ROOT}\n"
+    f"sender_id = {sender_id}\n"
+    f"sender_override = {_SENDER_ID_OVERRIDE or '(none)'}\n"
+    f"looper_started = {_TALKER_LOOPER_STARTED}"
+  )
 
 async def cmd_setagent(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
@@ -688,42 +896,61 @@ async def cmd_setagent(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   name = " ".join(context.args).strip().lower()
   if not name:
-    await update.message.reply_text("Usage: /setagent <name>   (supported: codex)")
+    await update.message.reply_text("Usage: /setagent <name>   (supported: looper)")
     return
 
-  # Validate agent name (only 'codex' is supported currently)
-  if name not in ("codex",):
-    await update.message.reply_text(f"Unknown agent: {name}. Supported: codex")
+  if name not in ("looper",):
+    await update.message.reply_text(f"Unknown agent: {name}. Supported: looper")
     return
 
   global _CURRENT_AGENT
   _CURRENT_AGENT = name
   await update.message.reply_text(f"OK. current_agent = {_CURRENT_AGENT}")
 
-async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """Start a fresh session (synonym: /new_session)."""
+async def cmd_reset_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
-
   if not _is_allowed(update):
     await update.message.reply_text("Access denied.")
     return
+  if _RUN_LOCK.locked():
+    await update.message.reply_text("Busy. Try again in a moment.")
+    return
 
-  global _CODEX_SESSION_ID, _CODEX_FORCE_FRESH_NEXT_RUN
-  _CODEX_SESSION_ID = None
-  _CODEX_FORCE_FRESH_NEXT_RUN = True
-  _create_new_session_dir()
-  _set_fresh_next_run_flag(_CURRENT_SESSION_DIR, True)
-  await update.message.reply_text("OK. New session started. Next run will be fresh (no resume).")
+  sender_id = _resolve_sender_id(update)
+  try:
+    removed = _reset_sender_dir(sender_id)
+    await update.message.reply_text(
+      f"OK. reset_session done for sender: {sender_id}. Removed files: {removed}"
+    )
+  except Exception as e:
+    await update.message.reply_text(f"reset_session failed: {e}")
+
+async def cmd_reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+  if _RUN_LOCK.locked():
+    await update.message.reply_text("Busy. Try again in a moment.")
+    return
+
+  try:
+    sender_count, removed_files = _reset_all_sender_dirs()
+    await update.message.reply_text(
+      f"OK. reset_all done. Sender dirs scanned: {sender_count}. Removed files: {removed_files}"
+    )
+  except Exception as e:
+    await update.message.reply_text(f"reset_all failed: {e}")
+
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Alias for /reset_session."""
+  await cmd_reset_session(update, context)
 
 async def cmd_loginstatus(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
 
   if not _is_allowed(update):
     await update.message.reply_text("Access denied.")
-    return
-
-  if _CURRENT_AGENT != "codex":
-    await update.message.reply_text(f"Command only available for 'codex' agent. Current: {_CURRENT_AGENT}")
     return
 
   codex_path = _resolve_codex_path()
@@ -761,11 +988,13 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
   
   help_text = """Available commands:
 /id - show your chat_id
-/agent - show current agent and memory status
-/setagent <name> - set agent (supported: codex)
+/agent - show gateway/looper state
+/setagent <name> - set agent (supported: looper)
 /run <text> - run text via current agent
-/reset - start a fresh session (no resume)
-/new_session - same as /reset
+/reset_session - reset current sender queue/session
+/reset_all - reset all sender queues
+/reset - alias of /reset_session
+/new_session - alias of /reset_session
 /loginstatus - show Codex login status
 /console - show current console mode
 /setconsole quiet|full - set console output mode
@@ -841,13 +1070,23 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
   await _run_agent(update, text)
 
 def main():
-  print("[BOOT] Starting Telegram gateway (polling)…")
+  print("[BOOT] Starting Telegram gateway (polling)...")
   print(f"[BOOT] Allowed chat_id = {ALLOWED_CHAT_ID_INT}")
   print(f"[BOOT] Current agent = {_CURRENT_AGENT}")
   print(f"[BOOT] Console mode = {_CONSOLE_MODE} (use /setconsole to change)")
-  print("[BOOT] Codex resume: uses persisted Codex session id when available (codex exec resume <id>).")
-  print(f"[BOOT] Codex session id loaded: {_CODEX_SESSION_ID or 'none'}")
+  print(f"[BOOT] Looper root = {_LOOPER_ROOT}")
+  print(f"[BOOT] Talker root = {_TALKER_ROOT}")
+  print(f"[BOOT] Inbox root = {_TALKER_INBOX_ROOT}")
+  if _SENDER_ID_OVERRIDE:
+    print(f"[BOOT] Sender override = {_SENDER_ID_OVERRIDE}")
   print(f"[BOOT] Session storage: {_SESSION_DIR}/")
+
+  try:
+    _ensure_talker_looper_started()
+    print("[BOOT] Talker looper startup command sent.")
+  except Exception as e:
+    # Keep gateway alive. /run will retry and return actionable error to chat.
+    print(f"[WARN] Talker looper start failed at boot: {e}")
 
   app = Application.builder().token(TOKEN).build()
 
@@ -855,6 +1094,8 @@ def main():
   app.add_handler(CommandHandler("id", cmd_id))
   app.add_handler(CommandHandler("agent", cmd_agent))
   app.add_handler(CommandHandler("setagent", cmd_setagent))
+  app.add_handler(CommandHandler("reset_session", cmd_reset_session))
+  app.add_handler(CommandHandler("reset_all", cmd_reset_all))
   app.add_handler(CommandHandler("reset", cmd_reset))
   app.add_handler(CommandHandler("new_session", cmd_reset))
   app.add_handler(CommandHandler("run", cmd_run))
