@@ -36,6 +36,8 @@
 #   /console            -> show current console output mode
 #   /setconsole <mode>  -> set console mode: quiet (default) or full
 #   /toggleconsole      -> toggle between quiet and full console mode
+#   /show_reasoning     -> show/hide [reasoning] stream (on|off)
+#   /show_commands      -> show/hide [command] stream (on|off)
 #   /help               -> list all available bot commands
 #
 # SECURITY:
@@ -220,7 +222,6 @@ _PROMPT_TIMESTAMP_RE = re.compile(
   r"(?P<millis>\d{3})(?:_(?P<suffix>[A-Za-z0-9]+))?$"
 )
 _JSON_DECODER = json.JSONDecoder()
-_BACKTICK_ABS_PATH_RE = re.compile(r"`([A-Za-z]:\\[^`\r\n]+)`")
 
 _TALKER_LOOPER_STARTED = False
 
@@ -276,6 +277,9 @@ def _ensure_talker_looper_started():
 
 # --- Console output mode: "quiet" (default) or "full" ---
 _CONSOLE_MODE = "full"
+# Stream visibility controls for Telegram output
+_SHOW_REASONING = True
+_SHOW_COMMANDS = False
 
 # Ensure directory exists and load initial state
 _ensure_session_dir()
@@ -297,6 +301,20 @@ def _clip(s: str, limit: int = 3500) -> str:
   if len(s) <= limit:
     return s
   return s[:limit] + "\n...(truncated)"
+
+def _parse_on_off_arg(args: List[str], *, command_name: str) -> Tuple[Optional[bool], Optional[str]]:
+  """
+  Parse optional switch argument for commands like /show_reasoning and /show_commands.
+  Returns (value, error). value is None when no args provided.
+  """
+  raw = " ".join(args).strip().lower()
+  if not raw:
+    return None, None
+  if raw in ("on", "1", "true", "yes"):
+    return True, None
+  if raw in ("off", "0", "false", "no"):
+    return False, None
+  return None, f"Usage: /{command_name} on|off"
 
 def _echo_console(update: Update):
   chat = update.effective_chat
@@ -451,15 +469,18 @@ def _process_looper_json_line(line: str, started_commands: Dict[str, bool]) -> T
   if obj_type == "item.started" and obj.get("item", {}).get("type") == "command_execution":
     item = obj["item"]
     item_id = str(item.get("id") or "")
+    cmd = str(item.get("command") or "")
     if item_id:
       started_commands[item_id] = True
+    if _SHOW_COMMANDS:
+      messages.append(f"[command] {cmd} (in_progress)")
     return messages, saw_turn_completed
 
   if obj_type == "item.completed" and obj.get("item"):
     item = obj["item"]
     item_type = item.get("type")
 
-    if item_type == "reasoning" and item.get("text"):
+    if item_type == "reasoning" and item.get("text") and _SHOW_REASONING:
       messages.append(f"[reasoning] {item['text']}")
       return messages, saw_turn_completed
 
@@ -468,7 +489,37 @@ def _process_looper_json_line(line: str, started_commands: Dict[str, bool]) -> T
       return messages, saw_turn_completed
 
     if item_type == "command_execution":
-      # Command stream is intentionally not sent to Telegram.
+      if not _SHOW_COMMANDS:
+        return messages, saw_turn_completed
+
+      item_id = str(item.get("id") or "")
+      cmd = str(item.get("command") or "")
+      status = str(item.get("status") or "")
+      code = item.get("exit_code")
+      started_before = bool(item_id and item_id in started_commands)
+
+      if started_before:
+        if status == "completed":
+          messages.append(f"[command] (exit={code})")
+        elif status == "failed":
+          messages.append(f"[command] (failed, exit={code})")
+        elif status:
+          messages.append(f"[command] ({status})")
+        else:
+          messages.append("[command]")
+      else:
+        if status == "completed":
+          messages.append(f"[command] {cmd} (exit={code})")
+        elif status == "failed":
+          messages.append(f"[command] {cmd} (failed, exit={code})")
+        elif status:
+          messages.append(f"[command] {cmd} ({status})")
+        else:
+          messages.append(f"[command] {cmd}")
+
+      aggregated_output = item.get("aggregated_output")
+      if aggregated_output:
+        messages.append(f"[command-output] {aggregated_output}")
       return messages, saw_turn_completed
 
   return messages, saw_turn_completed
@@ -501,30 +552,6 @@ def _extract_deliver_files(text: str) -> Tuple[str, List[str]]:
   
   clean_text = "\n".join(clean_lines)
   return clean_text, paths
-
-def _extract_inline_file_paths(text: str) -> List[str]:
-  """
-  Best-effort extraction of absolute file paths embedded in normal text.
-  We intentionally keep it strict (backticked absolute Windows paths only).
-  """
-  if not text:
-    return []
-
-  result: List[str] = []
-  seen: Set[str] = set()
-  for m in _BACKTICK_ABS_PATH_RE.finditer(text):
-    path = (m.group(1) or "").strip()
-    if not path:
-      continue
-    if not os.path.isfile(path):
-      # Inline autodetect is best-effort: ignore directories/non-existing paths silently.
-      continue
-    key = os.path.normcase(os.path.normpath(path))
-    if key in seen:
-      continue
-    seen.add(key)
-    result.append(path)
-  return result
 
 def _build_file_event_prompt(media_kind: str, saved_path: str, original_name: str,
                              caption: str, sender_id: str) -> str:
@@ -594,8 +621,6 @@ async def _emit_stream_messages(update: Update, messages: List[str], delivered_k
   emitted = False
   for message in messages:
     clean_text, file_paths = _extract_deliver_files(message)
-    if not file_paths:
-      file_paths = _extract_inline_file_paths(clean_text)
     if clean_text:
       await update.message.reply_text(_clip(clean_text))
       emitted = True
@@ -1042,12 +1067,6 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
   final_path = _allocate_incoming_file_path(sender_id, original_name)
   tmp_path = final_path + ".part"
   caption = (msg.caption or "").strip()
-  media_size = int(getattr(tg_media, "file_size", 0) or 0)
-  if media_size and media_size > _MAX_FILE_SIZE:
-    await update.message.reply_text(
-      f"Attachment too large: {media_size} bytes (limit: {_MAX_FILE_SIZE} bytes)."
-    )
-    return
 
   try:
     tg_file = await tg_media.get_file()
@@ -1098,7 +1117,9 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     f"inbox_root = {_TALKER_INBOX_ROOT}\n"
     f"sender_id = {sender_id}\n"
     f"sender_override = {_SENDER_ID_OVERRIDE or '(none)'}\n"
-    f"looper_started = {_TALKER_LOOPER_STARTED}"
+    f"looper_started = {_TALKER_LOOPER_STARTED}\n"
+    f"show_reasoning = {_SHOW_REASONING}\n"
+    f"show_commands = {_SHOW_COMMANDS}"
   )
 
 async def cmd_setagent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1213,6 +1234,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /console - show current console mode
 /setconsole quiet|full - set console output mode
 /toggleconsole - toggle console mode
+/show_reasoning on|off - enable/disable reasoning relay
+/show_commands on|off - enable/disable command relay
 /help - show this help
 
 Notes:
@@ -1257,6 +1280,42 @@ async def cmd_toggleconsole(update: Update, context: ContextTypes.DEFAULT_TYPE):
   global _CONSOLE_MODE
   _CONSOLE_MODE = "full" if _CONSOLE_MODE == "quiet" else "quiet"
   await update.message.reply_text(f"OK. console_mode = {_CONSOLE_MODE}")
+
+async def cmd_show_reasoning(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+
+  global _SHOW_REASONING
+  value, err = _parse_on_off_arg(context.args, command_name="show_reasoning")
+  if err:
+    await update.message.reply_text(err)
+    return
+  if value is None:
+    _SHOW_REASONING = not _SHOW_REASONING
+    await update.message.reply_text(f"OK. show_reasoning = {_SHOW_REASONING} (toggled)")
+    return
+  _SHOW_REASONING = value
+  await update.message.reply_text(f"OK. show_reasoning = {_SHOW_REASONING}")
+
+async def cmd_show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+
+  global _SHOW_COMMANDS
+  value, err = _parse_on_off_arg(context.args, command_name="show_commands")
+  if err:
+    await update.message.reply_text(err)
+    return
+  if value is None:
+    _SHOW_COMMANDS = not _SHOW_COMMANDS
+    await update.message.reply_text(f"OK. show_commands = {_SHOW_COMMANDS} (toggled)")
+    return
+  _SHOW_COMMANDS = value
+  await update.message.reply_text(f"OK. show_commands = {_SHOW_COMMANDS}")
 
 async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
@@ -1319,6 +1378,8 @@ def main():
   app.add_handler(CommandHandler("console", cmd_console))
   app.add_handler(CommandHandler("setconsole", cmd_setconsole))
   app.add_handler(CommandHandler("toggleconsole", cmd_toggleconsole))
+  app.add_handler(CommandHandler("show_reasoning", cmd_show_reasoning))
+  app.add_handler(CommandHandler("show_commands", cmd_show_commands))
 
   # Any attachment (non-command) => save under sender Files directory
   app.add_handler(
