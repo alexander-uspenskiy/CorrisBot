@@ -19,7 +19,9 @@
 #   3) Set env vars:
 #        - TELEGRAM_BOT_TOKEN
 #        - ALLOWED_CHAT_ID   (your numeric chat_id)
-#   4) Ensure Looper launcher exists (StartLoopsInWT.bat) and Codex login is valid
+#   4) Start with Talker root parameter:
+#        python tg_codex_gateway.py C:\CorrisBot\Talker
+#   5) Ensure Looper launcher exists (StartLoopsInWT.bat) and Codex login is valid
 #
 # Telegram commands:
 #   /id                 -> show your chat_id
@@ -46,6 +48,7 @@ import sys
 import json
 import time
 import uuid
+import argparse
 import atexit
 import asyncio
 import re
@@ -125,6 +128,7 @@ _CURRENT_AGENT = "looper"
 # --- Session persistence for gateway logging ---
 _SESSION_DIR = os.path.join(os.getcwd(), "sessions")
 _CURRENT_SESSION_DIR = None  # Path to current active session directory (gateway logs)
+_TEMP_DIR = os.path.join(os.getcwd(), "_Temp")
 
 def _ensure_session_dir():
   """Create sessions directory if it doesn't exist."""
@@ -190,10 +194,16 @@ def _get_session_log_paths() -> Tuple[Optional[str], Optional[str]]:
     return stdout_path, stderr_path
   return None, None
 
+def _ensure_temp_dir():
+  try:
+    os.makedirs(_TEMP_DIR, exist_ok=True)
+  except Exception:
+    pass
+
 # --- Looper/Talker configuration ---
 _LOOPER_ROOT = os.environ.get("LOOPER_ROOT", r"C:\CorrisBot\Looper").strip() or r"C:\CorrisBot\Looper"
-_TALKER_ROOT = os.environ.get("TALKER_ROOT", r"C:\CorrisBot\Talker").strip() or r"C:\CorrisBot\Talker"
-_TALKER_INBOX_ROOT = os.path.join(_TALKER_ROOT, "Prompts", "Inbox")
+_TALKER_ROOT = ""
+_TALKER_INBOX_ROOT = ""
 _START_LOOPS_BAT = os.path.join(_LOOPER_ROOT, "StartLoopsInWT.bat")
 _SENDER_ID_OVERRIDE = os.environ.get("TALKER_SENDER_ID", "").strip()
 
@@ -209,8 +219,31 @@ _PROMPT_TIMESTAMP_RE = re.compile(
   r"(?P<hour>\d{2})_(?P<minute>\d{2})_(?P<second>\d{2})_"
   r"(?P<millis>\d{3})(?:_(?P<suffix>[A-Za-z0-9]+))?$"
 )
+_JSON_DECODER = json.JSONDecoder()
+_BACKTICK_ABS_PATH_RE = re.compile(r"`([A-Za-z]:\\[^`\r\n]+)`")
 
 _TALKER_LOOPER_STARTED = False
+
+def _parse_runtime_args() -> argparse.Namespace:
+  parser = argparse.ArgumentParser(
+    description="Telegram gateway for Talker looper"
+  )
+  parser.add_argument(
+    "talker_root",
+    help="Path to Talker root folder (contains Prompts/Inbox)",
+  )
+  return parser.parse_args()
+
+def _configure_talker_paths(talker_root: str):
+  global _TALKER_ROOT, _TALKER_INBOX_ROOT
+  root = os.path.abspath((talker_root or "").strip())
+  if not root:
+    raise SystemExit("Missing required argument: talker_root")
+  _TALKER_ROOT = root
+  _TALKER_INBOX_ROOT = os.path.join(_TALKER_ROOT, "Prompts", "Inbox")
+
+_ARGS = _parse_runtime_args()
+_configure_talker_paths(_ARGS.talker_root)
 
 def _ensure_talker_paths():
   os.makedirs(_TALKER_INBOX_ROOT, exist_ok=True)
@@ -299,6 +332,35 @@ def _resolve_sender_id(update: Update) -> str:
   if user:
     return _sanitize_sender_id(f"tg_{user.id}")
   return "tg_unknown"
+
+def _sanitize_file_name(value: str) -> str:
+  name = (value or "").strip()
+  if not name:
+    return "file.bin"
+  name = os.path.basename(name.replace("\\", "/"))
+  name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+  name = name.strip("._")
+  if not name:
+    return "file.bin"
+  return name[:180]
+
+def _sender_files_dir(sender_id: str) -> str:
+  return os.path.join(_TALKER_INBOX_ROOT, sender_id, "Files")
+
+def _allocate_incoming_file_path(sender_id: str, original_name: str) -> str:
+  files_dir = _sender_files_dir(sender_id)
+  os.makedirs(files_dir, exist_ok=True)
+  safe_name = _sanitize_file_name(original_name)
+  stamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S_%f")[:-3]
+  candidate = os.path.join(files_dir, f"{stamp}_{safe_name}")
+  if not os.path.exists(candidate):
+    return candidate
+  base, ext = os.path.splitext(safe_name)
+  for i in range(1, 1000):
+    candidate = os.path.join(files_dir, f"{stamp}_{base}_{i:03d}{ext}")
+    if not os.path.exists(candidate):
+      return candidate
+  raise RuntimeError(f"Could not allocate incoming file name in {files_dir}")
 
 def _make_prompt_marker() -> str:
   now = datetime.now()
@@ -389,10 +451,8 @@ def _process_looper_json_line(line: str, started_commands: Dict[str, bool]) -> T
   if obj_type == "item.started" and obj.get("item", {}).get("type") == "command_execution":
     item = obj["item"]
     item_id = str(item.get("id") or "")
-    cmd = str(item.get("command") or "")
     if item_id:
       started_commands[item_id] = True
-    messages.append(f"[command] {cmd} (in_progress)")
     return messages, saw_turn_completed
 
   if obj_type == "item.completed" and obj.get("item"):
@@ -404,42 +464,12 @@ def _process_looper_json_line(line: str, started_commands: Dict[str, bool]) -> T
       return messages, saw_turn_completed
 
     if item_type == "agent_message" and item.get("text"):
-      messages.append(f"[agent]\n{item['text']}")
+      messages.append(str(item["text"]))
       return messages, saw_turn_completed
 
     if item_type == "command_execution":
-      item_id = str(item.get("id") or "")
-      cmd = str(item.get("command") or "")
-      status = str(item.get("status") or "")
-      code = item.get("exit_code")
-      started_before = bool(item_id and item_id in started_commands)
-
-      if started_before:
-        if status == "completed":
-          messages.append(f"[command] (exit={code})")
-        elif status == "failed":
-          messages.append(f"[command] (failed, exit={code})")
-        elif status:
-          messages.append(f"[command] ({status})")
-        else:
-          messages.append("[command]")
-      else:
-        if status == "completed":
-          messages.append(f"[command] {cmd} (exit={code})")
-        elif status == "failed":
-          messages.append(f"[command] {cmd} (failed, exit={code})")
-        elif status:
-          messages.append(f"[command] {cmd} ({status})")
-        else:
-          messages.append(f"[command] {cmd}")
-
-      aggregated_output = item.get("aggregated_output")
-      if aggregated_output:
-        messages.append(f"[command-output] {aggregated_output}")
+      # Command stream is intentionally not sent to Telegram.
       return messages, saw_turn_completed
-
-  if re.search(r"(error|failed)", obj_type, flags=re.IGNORECASE):
-    messages.append(f"[error] {line}")
 
   return messages, saw_turn_completed
 
@@ -471,6 +501,52 @@ def _extract_deliver_files(text: str) -> Tuple[str, List[str]]:
   
   clean_text = "\n".join(clean_lines)
   return clean_text, paths
+
+def _extract_inline_file_paths(text: str) -> List[str]:
+  """
+  Best-effort extraction of absolute file paths embedded in normal text.
+  We intentionally keep it strict (backticked absolute Windows paths only).
+  """
+  if not text:
+    return []
+
+  result: List[str] = []
+  seen: Set[str] = set()
+  for m in _BACKTICK_ABS_PATH_RE.finditer(text):
+    path = (m.group(1) or "").strip()
+    if not path:
+      continue
+    if not os.path.isfile(path):
+      # Inline autodetect is best-effort: ignore directories/non-existing paths silently.
+      continue
+    key = os.path.normcase(os.path.normpath(path))
+    if key in seen:
+      continue
+    seen.add(key)
+    result.append(path)
+  return result
+
+def _build_file_event_prompt(media_kind: str, saved_path: str, original_name: str,
+                             caption: str, sender_id: str) -> str:
+  lines: List[str] = []
+  lines.append("Системное событие от gateway: пользователь прислал вложение.")
+  lines.append(f"Sender ID: {sender_id}")
+  lines.append(f"Тип вложения: {media_kind}")
+  lines.append(f"Сохраненный файл: {saved_path}")
+  lines.append(f"Исходное имя: {original_name}")
+  if (caption or "").strip():
+    lines.append("")
+    lines.append("Подпись пользователя к файлу:")
+    lines.append(caption.strip())
+  else:
+    lines.append("")
+    lines.append("Подписи нет.")
+  lines.append("")
+  lines.append(
+    "Если в текущем диалоге пользователь ранее просил действие над присланным файлом, "
+    "выполни его используя путь выше."
+  )
+  return "\n".join(lines)
 
 async def _deliver_files(update: Update, paths: List[str], base_dir: Optional[str] = None,
                          delivered_keys: Optional[Set[str]] = None):
@@ -518,7 +594,9 @@ async def _emit_stream_messages(update: Update, messages: List[str], delivered_k
   emitted = False
   for message in messages:
     clean_text, file_paths = _extract_deliver_files(message)
-    if clean_text and clean_text.strip() != "[agent]":
+    if not file_paths:
+      file_paths = _extract_inline_file_paths(clean_text)
+    if clean_text:
       await update.message.reply_text(_clip(clean_text))
       emitted = True
     if file_paths:
@@ -549,23 +627,71 @@ async def _process_result_line(update: Update, line: str, started_commands: Dict
     return turn_completed, False, emitted
 
   # Non-JSON informational lines.
-  lowered = trim.lower()
   finished_line = trim.startswith("Finished:")
-  messages = []
-  if finished_line:
-    messages.append(f"[done] {trim}")
-  elif trim.startswith("Command failed with exit code:"):
-    messages.append(f"[error] {trim}")
-  elif re.search(r"\b(error|exception|failed|fatal)\b", lowered):
-    messages.append(trim)
-  elif re.search(r"\bwarn\b", lowered):
-    messages.append(trim)
+  messages: List[str] = []
+  # Keep non-JSON transport silent for Telegram; only use these lines for control flow.
+  if trim.startswith("Command failed with exit code:") and _CONSOLE_MODE == "full":
+    print(f"[stream] [error] {trim}")
 
   emitted = await _emit_stream_messages(update, messages, delivered_keys)
   if _CONSOLE_MODE == "full":
     for msg in messages:
       print(f"[stream] {msg}")
   return False, finished_line, emitted
+
+async def _drain_pending_events(update: Update, pending: str, started_commands: Dict[str, bool],
+                                delivered_keys: Set[str]) -> Tuple[str, bool, bool, bool, bool]:
+  """
+  Drain all complete records from `pending`.
+  Supports:
+    - newline-terminated lines
+    - complete JSON objects even without trailing newline
+  Returns (remaining_pending, saw_turn_completed, saw_finished_line, emitted_any, saw_fail_fast).
+  """
+  seen_turn_completed = False
+  seen_finished_line = False
+  emitted_any = False
+  fail_fast = False
+
+  while True:
+    while pending and pending[0] in "\r\n":
+      pending = pending[1:]
+    if not pending:
+      break
+
+    if pending.startswith("{"):
+      try:
+        _, end = _JSON_DECODER.raw_decode(pending)
+      except json.JSONDecodeError:
+        end = -1
+      if end > 0:
+        raw_json = pending[:end]
+        pending = pending[end:]
+        turn_completed, finished_line, emitted = await _process_result_line(
+          update, raw_json, started_commands, delivered_keys
+        )
+        seen_turn_completed = seen_turn_completed or turn_completed
+        seen_finished_line = seen_finished_line or finished_line
+        emitted_any = emitted_any or emitted
+        continue
+
+    nl = pending.find("\n")
+    if nl < 0:
+      break
+
+    raw_line = pending[:nl].rstrip("\r")
+    pending = pending[nl + 1:]
+    turn_completed, finished_line, emitted = await _process_result_line(
+      update, raw_line, started_commands, delivered_keys
+    )
+    seen_turn_completed = seen_turn_completed or turn_completed
+    seen_finished_line = seen_finished_line or finished_line
+    emitted_any = emitted_any or emitted
+    if raw_line.strip().startswith("Command failed with exit code:"):
+      fail_fast = True
+      break
+
+  return pending, seen_turn_completed, seen_finished_line, emitted_any, fail_fast
 
 async def _stream_result_file(update: Update, result_path: str, session_stdout_path: Optional[str]) -> Tuple[bool, bool]:
   """
@@ -599,25 +725,20 @@ async def _stream_result_file(update: Update, result_path: str, session_stdout_p
         last_change_time = now
         _append_raw(session_stdout_path, chunk)
         pending += chunk
-
-        while True:
-          nl = pending.find("\n")
-          if nl < 0:
-            break
-          raw_line = pending[:nl].rstrip("\r")
-          pending = pending[nl + 1:]
-
-          turn_completed, finished_line, emitted = await _process_result_line(
-            update, raw_line, started_commands, delivered_keys
-          )
-          seen_turn_completed = seen_turn_completed or turn_completed
-          seen_finished_line = seen_finished_line or finished_line
-          emitted_any = emitted_any or emitted
-          # Fail-fast terminal state for looper hard failure line.
-          if raw_line.strip().startswith("Command failed with exit code:"):
-            return False, emitted_any
+        pending, turn_completed, finished_line, emitted, fail_fast = await _drain_pending_events(
+          update, pending, started_commands, delivered_keys
+        )
+        seen_turn_completed = seen_turn_completed or turn_completed
+        seen_finished_line = seen_finished_line or finished_line
+        emitted_any = emitted_any or emitted
+        if fail_fast:
+          return False, emitted_any
 
     if seen_turn_completed:
+      pending, _, _, emitted, _ = await _drain_pending_events(
+        update, pending, started_commands, delivered_keys
+      )
+      emitted_any = emitted_any or emitted
       if pending.strip():
         _, _, emitted = await _process_result_line(
           update, pending.rstrip("\r"), started_commands, delivered_keys
@@ -633,6 +754,10 @@ async def _stream_result_file(update: Update, result_path: str, session_stdout_p
       continue
 
     if seen_finished_line and (now - last_change_time) >= _RESULT_FINISHED_IDLE_SEC:
+      pending, _, _, emitted, _ = await _drain_pending_events(
+        update, pending, started_commands, delivered_keys
+      )
+      emitted_any = emitted_any or emitted
       if pending.strip():
         _, _, emitted = await _process_result_line(
           update, pending.rstrip("\r"), started_commands, delivered_keys
@@ -785,7 +910,7 @@ def _reset_all_sender_dirs() -> Tuple[int, int]:
     removed_files += _clear_sender_artifacts(path)
   return sender_count, removed_files
 
-async def _run_agent(update: Update, prompt: str):
+async def _run_agent(update: Update, prompt: str, wait_for_lock: bool = False):
   global _CURRENT_AGENT, _CURRENT_SESSION_DIR
 
   prompt = (prompt or "").strip()
@@ -793,12 +918,18 @@ async def _run_agent(update: Update, prompt: str):
     await update.message.reply_text("Empty prompt.")
     return
 
-  # Concurrency protection: non-blocking acquire.
-  try:
-    await asyncio.wait_for(_RUN_LOCK.acquire(), timeout=0.001)
-  except asyncio.TimeoutError:
-    await update.message.reply_text("Busy. Try again in a moment.")
-    return
+  acquired = False
+  if wait_for_lock:
+    await _RUN_LOCK.acquire()
+    acquired = True
+  else:
+    # Concurrency protection: non-blocking acquire.
+    try:
+      await asyncio.wait_for(_RUN_LOCK.acquire(), timeout=0.001)
+      acquired = True
+    except asyncio.TimeoutError:
+      await update.message.reply_text("Busy. Try again in a moment.")
+      return
 
   if _CURRENT_SESSION_DIR is None:
     _create_new_session_dir()
@@ -820,8 +951,9 @@ async def _run_agent(update: Update, prompt: str):
 
     session_stdout_path, session_stderr_path = _get_session_log_paths()
     if not session_stdout_path or not session_stderr_path:
-      session_stdout_path = os.path.join(os.getcwd(), "_temp_stdout.log")
-      session_stderr_path = os.path.join(os.getcwd(), "_temp_stderr.log")
+      _ensure_temp_dir()
+      session_stdout_path = os.path.join(_TEMP_DIR, "_temp_stdout.log")
+      session_stderr_path = os.path.join(_TEMP_DIR, "_temp_stderr.log")
 
     sender_id = _resolve_sender_id(update)
     sender_dir = os.path.join(_TALKER_INBOX_ROOT, sender_id)
@@ -859,7 +991,89 @@ async def _run_agent(update: Update, prompt: str):
       timeout_killed=timeout_killed,
       duration_ms=duration_ms,
     )
-    _RUN_LOCK.release()
+    if acquired:
+      _RUN_LOCK.release()
+
+async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+
+  msg = update.message
+  if not msg:
+    return
+
+  tg_media = None
+  original_name = ""
+  media_kind = "file"
+
+  if msg.document:
+    tg_media = msg.document
+    original_name = msg.document.file_name or f"document_{msg.document.file_unique_id}.bin"
+    media_kind = "document"
+  elif msg.audio:
+    tg_media = msg.audio
+    original_name = msg.audio.file_name or f"audio_{msg.audio.file_unique_id}.mp3"
+    media_kind = "audio"
+  elif msg.video:
+    tg_media = msg.video
+    original_name = msg.video.file_name or f"video_{msg.video.file_unique_id}.mp4"
+    media_kind = "video"
+  elif msg.voice:
+    tg_media = msg.voice
+    original_name = f"voice_{msg.voice.file_unique_id}.ogg"
+    media_kind = "voice"
+  elif msg.photo:
+    tg_media = msg.photo[-1]
+    original_name = f"photo_{tg_media.file_unique_id}.jpg"
+    media_kind = "photo"
+  elif msg.video_note:
+    tg_media = msg.video_note
+    original_name = f"video_note_{msg.video_note.file_unique_id}.mp4"
+    media_kind = "video_note"
+
+  if tg_media is None:
+    await update.message.reply_text("Unsupported attachment type.")
+    return
+
+  sender_id = _resolve_sender_id(update)
+  final_path = _allocate_incoming_file_path(sender_id, original_name)
+  tmp_path = final_path + ".part"
+  caption = (msg.caption or "").strip()
+  media_size = int(getattr(tg_media, "file_size", 0) or 0)
+  if media_size and media_size > _MAX_FILE_SIZE:
+    await update.message.reply_text(
+      f"Attachment too large: {media_size} bytes (limit: {_MAX_FILE_SIZE} bytes)."
+    )
+    return
+
+  try:
+    tg_file = await tg_media.get_file()
+    await tg_file.download_to_drive(custom_path=tmp_path)
+    os.replace(tmp_path, final_path)
+    size = os.path.getsize(final_path)
+    await update.message.reply_text(
+      f"Saved {media_kind}: {os.path.basename(final_path)} ({size} bytes)\n"
+      f"Path: {final_path}"
+    )
+    auto_prompt = _build_file_event_prompt(
+      media_kind=media_kind,
+      saved_path=final_path,
+      original_name=original_name,
+      caption=caption,
+      sender_id=sender_id,
+    )
+    await _run_agent(update, auto_prompt, wait_for_lock=True)
+  except Exception as e:
+    await update.message.reply_text(f"Failed to save attachment: {e}")
+  finally:
+    try:
+      if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+    except Exception:
+      pass
 
 # --- Telegram handlers ---
 
@@ -1003,7 +1217,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Notes:
 - Only one run at a time; if busy, you'll get "Busy. Try again in a moment."
-- Plain text (without /) is also forwarded to current agent."""
+- Plain text (without /) is also forwarded to current agent.
+- Attachments are saved to Talker inbox sender folder (.../Inbox/<sender>/Files)."""
   
   await update.message.reply_text(help_text)
 
@@ -1104,6 +1319,14 @@ def main():
   app.add_handler(CommandHandler("console", cmd_console))
   app.add_handler(CommandHandler("setconsole", cmd_setconsole))
   app.add_handler(CommandHandler("toggleconsole", cmd_toggleconsole))
+
+  # Any attachment (non-command) => save under sender Files directory
+  app.add_handler(
+    MessageHandler(
+      (filters.ATTACHMENT | filters.PHOTO) & ~filters.COMMAND,
+      on_file,
+    )
+  )
 
   # Any plain text (non-command) => run agent
   app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
