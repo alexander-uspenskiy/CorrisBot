@@ -20,6 +20,12 @@ ANSI_COLORS = {
     "darkyellow": "\x1b[33;2m",
 }
 ANSI_RESET = "\x1b[0m"
+PROMPT_TIMESTAMP_RE = re.compile(
+    r"^(?P<year>\d{4})_(?P<month>\d{2})_(?P<day>\d{2})_"
+    r"(?P<hour>\d{2})_(?P<minute>\d{2})_(?P<second>\d{2})_"
+    r"(?P<millis>\d{3})(?:_(?P<suffix>[A-Za-z0-9]+))?$"
+)
+PromptSortKey = tuple[int, int, int, int, int, int, int, str]
 
 
 def now_str() -> str:
@@ -48,6 +54,8 @@ class LoopRunner:
         self.legacy_inbox_state_path = self.inbox_root / "loop_state.json"
         self.console_log_path = self.inbox_root / "Console.log"
         self.ansi_enabled = self._try_enable_ansi()
+        self.warned_invalid_prompt_paths: set[str] = set()
+        self.warned_invalid_watermark_senders: set[str] = set()
 
     @staticmethod
     def _try_enable_ansi() -> bool:
@@ -81,24 +89,45 @@ class LoopRunner:
         return sorted(p for p in self.inbox_root.iterdir() if p.is_dir())
 
     @staticmethod
-    def _parse_next_index(obj: dict) -> int:
-        try:
-            return int(obj.get("next_index", 0))
-        except Exception:
-            return 0
+    def parse_prompt_marker(marker: str) -> Optional[PromptSortKey]:
+        marker = marker.strip()
+        if not marker:
+            return None
 
-    def read_sender_state(self, sender_dir: Path) -> tuple[Optional[str], int, str]:
+        match = PROMPT_TIMESTAMP_RE.fullmatch(marker)
+        if not match:
+            return None
+
+        year = int(match.group("year"))
+        month = int(match.group("month"))
+        day = int(match.group("day"))
+        hour = int(match.group("hour"))
+        minute = int(match.group("minute"))
+        second = int(match.group("second"))
+        millis = int(match.group("millis"))
+        suffix = match.group("suffix") or ""
+
+        try:
+            datetime(year, month, day, hour, minute, second, millis * 1000)
+        except ValueError:
+            return None
+
+        return year, month, day, hour, minute, second, millis, suffix
+
+    def read_sender_state(self, sender_dir: Path) -> tuple[Optional[str], str, str]:
         state_path = sender_dir / "loop_state.json"
         if not state_path.exists():
-            return None, 0, ""
+            return None, "", ""
 
         try:
             raw = state_path.read_text(encoding="utf-8")
             obj = json.loads(raw)
             thread_id = obj.get("thread_id")
-            next_index = self._parse_next_index(obj)
+            last_processed_marker = str(
+                obj.get("last_processed_marker") or obj.get("last_processed_timestamp") or ""
+            ).strip()
             updated_at = str(obj.get("updated_at") or "")
-            return thread_id, next_index, updated_at
+            return thread_id, last_processed_marker, updated_at
         except Exception:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             corrupt_path = sender_dir / f"loop_state.corrupt.{stamp}.json"
@@ -111,20 +140,22 @@ class LoopRunner:
                 ,
                 "darkgray",
             )
-            return None, 0, ""
+            return None, "", ""
 
-    def write_sender_state(self, sender_dir: Path, thread_id: Optional[str], next_index: int) -> None:
+    def write_sender_state(
+        self, sender_dir: Path, thread_id: Optional[str], last_processed_marker: str
+    ) -> None:
         state_path = sender_dir / "loop_state.json"
         payload = {
             "thread_id": thread_id,
-            "next_index": next_index,
+            "last_processed_marker": last_processed_marker,
             "updated_at": now_str(),
         }
         tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp_path.replace(state_path)
 
-    def read_legacy_inbox_state(self) -> tuple[Optional[str], dict[str, int]]:
+    def read_legacy_inbox_state(self) -> tuple[Optional[str], dict[str, str]]:
         if not self.legacy_inbox_state_path.exists():
             return None, {}
 
@@ -132,20 +163,14 @@ class LoopRunner:
             raw = self.legacy_inbox_state_path.read_text(encoding="utf-8")
             obj = json.loads(raw)
             thread_id = obj.get("thread_id")
-            sender_next_index: dict[str, int] = {}
+            sender_last_processed_marker: dict[str, str] = {}
+            if isinstance(obj.get("sender_last_processed_marker"), dict):
+                for sender, marker in obj["sender_last_processed_marker"].items():
+                    normalized = str(marker or "").strip()
+                    if normalized:
+                        sender_last_processed_marker[str(sender)] = normalized
 
-            if isinstance(obj.get("sender_next_index"), dict):
-                for sender, idx in obj["sender_next_index"].items():
-                    try:
-                        sender_next_index[str(sender)] = int(idx)
-                    except Exception:
-                        continue
-            elif "next_index" in obj:
-                sender_dirs = self.get_sender_dirs()
-                if len(sender_dirs) == 1:
-                    sender_next_index[sender_dirs[0].name] = int(obj.get("next_index", 0))
-
-            return thread_id, sender_next_index
+            return thread_id, sender_last_processed_marker
         except Exception:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             corrupt_path = self.inbox_root / f"loop_state.corrupt.{stamp}.json"
@@ -448,72 +473,132 @@ class LoopRunner:
         with path.open("a", encoding="utf-8") as f:
             f.write(text)
 
-    def pick_next_prompt(
-        self, sender_next_index: dict[str, int]
-    ) -> Optional[tuple[str, Path, Path, int]]:
-        candidates: list[tuple[float, str, Path, Path, int]] = []
-        for sender_dir in self.get_sender_dirs():
-            sender_id = sender_dir.name
-            if sender_id not in sender_next_index:
-                _, next_index, _ = self.read_sender_state(sender_dir)
-                sender_next_index[sender_id] = next_index
-            index = int(sender_next_index.get(sender_id, 0))
-            prompt_path = sender_dir / f"Prompt_{index:04d}.md"
-            if prompt_path.exists():
-                try:
-                    mtime = prompt_path.stat().st_mtime
-                except Exception:
-                    continue
-                candidates.append((mtime, sender_id, sender_dir, prompt_path, index))
+    def warn_invalid_prompt_once(self, prompt_path: Path) -> None:
+        warning_key = str(prompt_path).lower()
+        if warning_key in self.warned_invalid_prompt_paths:
+            return
+        self.warned_invalid_prompt_paths.add(warning_key)
+        self.write_console_line(
+            f"[warning] Skipping prompt with invalid timestamp format: {prompt_path}",
+            "darkyellow",
+        )
+
+    def pick_sender_candidate(
+        self, sender_dir: Path, last_processed_marker: str
+    ) -> Optional[tuple[PromptSortKey, Path, str]]:
+        last_processed_key: Optional[PromptSortKey] = None
+        if last_processed_marker:
+            last_processed_key = self.parse_prompt_marker(last_processed_marker)
+            if last_processed_key is None:
+                sender_key = sender_dir.name.lower()
+                if sender_key not in self.warned_invalid_watermark_senders:
+                    self.warned_invalid_watermark_senders.add(sender_key)
+                    self.write_console_line(
+                        f"[warning] Sender state watermark is invalid for '{sender_dir.name}': "
+                        f"'{last_processed_marker}'. Treating as empty watermark.",
+                        "darkyellow",
+                    )
+                last_processed_key = None
+
+        candidates: list[tuple[PromptSortKey, Path, str]] = []
+        for child in sender_dir.iterdir():
+            if not child.is_file():
+                continue
+
+            file_name = child.name
+            if not (file_name.startswith("Prompt_") and file_name.endswith(".md")):
+                continue
+            if file_name.endswith("_Result.md"):
+                continue
+
+            marker = file_name[len("Prompt_"):-3]
+            marker_key = self.parse_prompt_marker(marker)
+            if marker_key is None:
+                self.warn_invalid_prompt_once(child)
+                continue
+
+            if last_processed_key is not None and marker_key <= last_processed_key:
+                continue
+
+            candidates.append((marker_key, child, marker))
 
         if not candidates:
             return None
 
-        candidates.sort(key=lambda x: (x[0], x[1]))
-        _, sender_id, sender_dir, prompt_path, index = candidates[0]
-        return sender_id, sender_dir, prompt_path, index
+        candidates.sort(key=lambda item: (item[0], item[1].name.lower()))
+        return candidates[0]
 
-    def get_waiting_prompt_paths(self, sender_next_index: dict[str, int]) -> list[Path]:
-        paths: list[Path] = []
+    def pick_next_prompt(
+        self, sender_last_processed_marker: dict[str, str]
+    ) -> Optional[tuple[str, Path, Path, str]]:
+        candidates: list[tuple[PromptSortKey, str, Path, Path, str]] = []
         for sender_dir in self.get_sender_dirs():
             sender_id = sender_dir.name
-            if sender_id not in sender_next_index:
-                _, next_index, _ = self.read_sender_state(sender_dir)
-                sender_next_index[sender_id] = next_index
-            index = int(sender_next_index.get(sender_id, 0))
-            paths.append(sender_dir / f"Prompt_{index:04d}.md")
-        return paths
+            if sender_id not in sender_last_processed_marker:
+                _, last_marker, _ = self.read_sender_state(sender_dir)
+                sender_last_processed_marker[sender_id] = last_marker
+
+            sender_candidate = self.pick_sender_candidate(
+                sender_dir, sender_last_processed_marker.get(sender_id, "")
+            )
+            if sender_candidate is None:
+                continue
+
+            marker_key, prompt_path, marker = sender_candidate
+            candidates.append((marker_key, sender_id, sender_dir, prompt_path, marker))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        _, sender_id, sender_dir, prompt_path, marker = candidates[0]
+        return sender_id, sender_dir, prompt_path, marker
+
+    def get_waiting_sender_messages(self, sender_last_processed_marker: dict[str, str]) -> list[str]:
+        messages: list[str] = []
+        for sender_dir in self.get_sender_dirs():
+            sender_id = sender_dir.name
+            if sender_id not in sender_last_processed_marker:
+                _, last_marker, _ = self.read_sender_state(sender_dir)
+                sender_last_processed_marker[sender_id] = last_marker
+
+            marker = sender_last_processed_marker.get(sender_id, "").strip()
+            if marker:
+                messages.append(f"Waiting: {sender_dir} (after {marker})")
+            else:
+                messages.append(f"Waiting: {sender_dir}")
+        return messages
 
     def run_forever(self) -> None:
         self.write_console_line(f"Watching inbox root: {self.inbox_root}")
-        sender_next_index: dict[str, int] = {}
+        sender_last_processed_marker: dict[str, str] = {}
         thread_id: Optional[str] = None
         best_thread_updated_at = ""
 
         for sender_dir in self.get_sender_dirs():
             sender_id = sender_dir.name
-            state_thread_id, next_index, updated_at = self.read_sender_state(sender_dir)
-            sender_next_index[sender_id] = next_index
+            state_thread_id, last_processed_marker, updated_at = self.read_sender_state(sender_dir)
+            sender_last_processed_marker[sender_id] = last_processed_marker
             if state_thread_id and (not best_thread_updated_at or updated_at >= best_thread_updated_at):
                 thread_id = state_thread_id
                 best_thread_updated_at = updated_at
 
-        legacy_thread_id, legacy_next_map = self.read_legacy_inbox_state()
-        for sender_id, next_index in legacy_next_map.items():
-            sender_next_index.setdefault(sender_id, next_index)
+        legacy_thread_id, legacy_last_marker_map = self.read_legacy_inbox_state()
+        for sender_id, marker in legacy_last_marker_map.items():
+            sender_last_processed_marker.setdefault(sender_id, marker)
         if (not thread_id) and legacy_thread_id:
             thread_id = legacy_thread_id
 
         waiting_logged = False
 
         while True:
-            picked = self.pick_next_prompt(sender_next_index)
+            picked = self.pick_next_prompt(sender_last_processed_marker)
             if picked is None:
                 if not waiting_logged:
-                    waiting_paths = self.get_waiting_prompt_paths(sender_next_index)
-                    if waiting_paths:
-                        for path in waiting_paths:
-                            self.write_console_line(f"Waiting: {path}", "darkyellow")
+                    waiting_messages = self.get_waiting_sender_messages(sender_last_processed_marker)
+                    if waiting_messages:
+                        for message in waiting_messages:
+                            self.write_console_line(message, "darkyellow")
                     else:
                         self.write_console_line(f"Waiting: no sender directories in {self.inbox_root}", "darkyellow")
                     waiting_logged = True
@@ -521,14 +606,14 @@ class LoopRunner:
                 continue
 
             waiting_logged = False
-            sender_id, sender_dir, prompt_path, index = picked
+            sender_id, sender_dir, prompt_path, marker = picked
             self.write_console_line(f"Selected: {prompt_path}", "yellow")
             prompts_dir = prompt_path.parent
             prompt_name = prompt_path.name
 
             self.wait_for_file_ready(prompt_path)
 
-            result_name = f"Prompt_{index:04d}_Result.md"
+            result_name = f"{prompt_path.stem}_Result.md"
             result_path = prompts_dir / result_name
 
             self.write_console_line(f"Processing {sender_id}/{prompt_name}")
@@ -569,14 +654,13 @@ class LoopRunner:
 
             self.append_text(result_path, f"\nFinished: {now_str()}\n")
 
-            next_index = index + 1
-            sender_next_index[sender_id] = next_index
-            self.write_sender_state(sender_dir, thread_id, next_index)
+            sender_last_processed_marker[sender_id] = marker
+            self.write_sender_state(sender_dir, thread_id, marker)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Loop: waits for Prompt_XXXX.md files in agent inbox and processes them via codex."
+        description="Loop: waits for Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md files in agent inbox and processes them via codex."
     )
     parser.add_argument(
         "--project-root",
