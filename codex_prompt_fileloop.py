@@ -20,6 +20,7 @@ ANSI_COLORS = {
     "darkyellow": "\x1b[33;2m",
 }
 ANSI_RESET = "\x1b[0m"
+DEBUG_LOG_TIMESTAMPS = False
 PROMPT_TIMESTAMP_RE = re.compile(
     r"^(?P<year>\d{4})_(?P<month>\d{2})_(?P<day>\d{2})_"
     r"(?P<hour>\d{2})_(?P<minute>\d{2})_(?P<second>\d{2})_"
@@ -30,6 +31,25 @@ PromptSortKey = tuple[int, int, int, int, int, int, int, str]
 
 def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def now_str_ms() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def with_debug_timestamps(text: str) -> str:
+    if not DEBUG_LOG_TIMESTAMPS:
+        return text
+    parts = text.splitlines(keepends=True)
+    if not parts:
+        return text
+
+    stamped: list[str] = []
+    for part in parts:
+        content = part.rstrip("\r\n")
+        newline = part[len(content):]
+        stamped.append(f"[{now_str_ms()}] {content}{newline}")
+    return "".join(stamped)
 
 
 class LoopRunner:
@@ -75,11 +95,15 @@ class LoopRunner:
             return False
 
     def write_console_line(self, text: str, color: str = "gray") -> None:
+        rendered_text = with_debug_timestamps(text)
+
         if self.ansi_enabled and color in ANSI_COLORS:
-            print(f"{ANSI_COLORS[color]}{text}{ANSI_RESET}", flush=True)
+            print(f"{ANSI_COLORS[color]}{rendered_text}{ANSI_RESET}", flush=True)
         else:
-            print(text, flush=True)
-        line = f"[{now_str()}] {text}\n"
+            print(rendered_text, flush=True)
+        line = with_debug_timestamps(f"{text}\n")
+        if not DEBUG_LOG_TIMESTAMPS:
+            line = f"[{now_str()}] {text}\n"
         with self.console_log_path.open("a", encoding="utf-8") as f:
             f.write(line)
 
@@ -424,7 +448,7 @@ class LoopRunner:
                 for raw_line in proc.stdout:
                     line = raw_line.rstrip("\r\n")
                     lines.append(line)
-                    result_file.write(raw_line)
+                    result_file.write(with_debug_timestamps(raw_line))
                     self.process_codex_line(line, started_commands)
                     try:
                         obj = json.loads(line)
@@ -466,12 +490,11 @@ class LoopRunner:
             return
         with path.open("a", encoding="utf-8") as f:
             for line in lines:
-                f.write(line)
-                f.write("\n")
+                f.write(with_debug_timestamps(f"{line}\n"))
 
     def append_text(self, path: Path, text: str) -> None:
         with path.open("a", encoding="utf-8") as f:
-            f.write(text)
+            f.write(with_debug_timestamps(text))
 
     def warn_invalid_prompt_once(self, prompt_path: Path) -> None:
         warning_key = str(prompt_path).lower()
