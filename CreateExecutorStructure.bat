@@ -2,10 +2,12 @@
 setlocal EnableExtensions
 
 if "%~1"=="" goto :usage
-if not "%~2"=="" goto :usage
+if "%~2"=="" goto :usage
+if not "%~3"=="" goto :usage
 
 set "SOURCE_ROOT=C:\CorrisBot\ProjectFolder_Template\.CorrisBot\Executors\Executor_001"
 set "SUBFOLDER_NAME=%~1"
+set "ORCHESTRATOR_NAME=%~2"
 set "DEST_ROOT=%CD%\%SUBFOLDER_NAME%"
 
 if not exist "%SOURCE_ROOT%\" (
@@ -50,6 +52,12 @@ if not exist "%DEST_ROOT%\Prompts\Inbox\" (
     exit /b 6
   )
 )
+if not exist "%DEST_ROOT%\Prompts\Inbox\%ORCHESTRATOR_NAME%\" (
+  mkdir "%DEST_ROOT%\Prompts\Inbox\%ORCHESTRATOR_NAME%" || (
+    echo Failed to create directory: "%DEST_ROOT%\Prompts\Inbox\%ORCHESTRATOR_NAME%"
+    exit /b 6
+  )
+)
 
 for %%F in (AGENTS.md Info.md ROLE_EXECUTOR.md) do (
   if not exist "%SOURCE_ROOT%\%%F" (
@@ -68,7 +76,7 @@ echo Structure ensured successfully: "%DEST_ROOT%"
 exit /b 0
 
 :usage
-echo Usage: %~nx0 ^<subfolder_name^>
+echo Usage: %~nx0 ^<subfolder_name^> ^<orchestrator_name^>
 echo Creates new executor structure in current directory.
-echo Example: %~nx0 Executor_002
+echo Example: %~nx0 Executor_002 Orc1
 exit /b 1
