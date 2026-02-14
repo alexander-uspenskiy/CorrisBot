@@ -4,15 +4,16 @@
 - Выбираем название агенту. Должно быть простым, совместимым с файловой системой.
 - Сначала создается структура файлов для работы лупера:
 Run the script from the target parent folder, or call it by full path.  
-Example: `cd /d C:\Temp\ProjectName\Executors && "C:\CorrisBot\Looper\CreateExecutorStructure.bat" "Executor_002" "Orc1"` (quotes are required if arguments contain spaces; using quotes always is recommended).
+Example: `cd /d <ProjectPath>\Executors && "C:\CorrisBot\Looper\CreateExecutorStructure.bat" "Executor_002" "Orc1"` (quotes are required if arguments contain spaces; using quotes always is recommended).
 (Здесь нюанс, что для Executors агентов есть отдельный подкаталог `Executors` в каталоге проекта).
 Переходим в папку, где хотим создать каталог для агента, и запускаем оттуда. 
-Первый праметр - это имя агента, второй - имя того, с кем он будет на связи (например, Orchestrator или Talker).
+Первый праметр - это имя агента, второй - `SenderID` того, от кого этот агент ожидает входящие prompt-файлы (например, `Orc1`, `Orchestrator`, `Talker`).
+Важно: второй параметр - это логическое имя отправителя (SenderID), а не имя каталога. Оркестратор может быть расположен в каталоге `Orchestrator`, но использовать SenderID `Orc1`.
 
 # Запуск агента-лупера
 - После создания файловой структуры запускается сам Лупер (как скрипт-терминала + ИИ агент). 
 - Создается через запуск бат файла:
-`C:\CorrisBot\Looper\StartLoopsInWT.bat "<ProjectFolder>" "Executors\Executor_001"`
+`C:\CorrisBot\Looper\StartLoopsInWT.bat "<ProjectPath>" "Executors\Executor_002"`
 Первый параметр - это путь до проекта, второй - название лупера. 
 Проектов в одном приложении может быть много (Пример вымышленный искать не нужно).
 Например, `c:\Minesweeper\.MigrationToIOs`  - Это проект миграции на iOs.

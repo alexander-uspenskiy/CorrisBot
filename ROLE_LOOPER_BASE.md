@@ -17,3 +17,5 @@ If a final file is created "just in case" and no path is provided, place it in `
 Create a normal prompt file in the target sender inbox (`<LooperFolder>/Prompts/Inbox/<SenderID>/Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`).
 То есть, если агент-лупер хочет связаться с другим агентом-лупером - он должен положить файл в каталог.
 Если каталога нет - создать его.
+- Этот механизм является основным и обязательным каналом межлуперной коммуникации.
+- Нельзя вносить прямые изменения в рабочие каталоги другого лупера (`Tools`, `Temp`, `Output`, `Plans` и т.п.), кроме записи prompt-файла в его `Prompts/Inbox/<SenderID>/`.
