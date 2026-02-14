@@ -13,14 +13,11 @@ if not exist "%SOURCE_ROOT%\" (
   exit /b 2
 )
 
-if exist "%DEST_ROOT%\" (
-  echo Destination already exists: "%DEST_ROOT%"
-  exit /b 3
-)
-
-mkdir "%DEST_ROOT%" || (
-  echo Failed to create destination root: "%DEST_ROOT%"
-  exit /b 4
+if not exist "%DEST_ROOT%\" (
+  mkdir "%DEST_ROOT%" || (
+    echo Failed to create destination root: "%DEST_ROOT%"
+    exit /b 4
+  )
 )
 
 for %%D in (Output Plans Temp Tools) do (
@@ -28,9 +25,11 @@ for %%D in (Output Plans Temp Tools) do (
     echo Missing required source directory: "%SOURCE_ROOT%\%%D"
     exit /b 5
   )
-  mkdir "%DEST_ROOT%\%%D" || (
-    echo Failed to create directory: "%DEST_ROOT%\%%D"
-    exit /b 6
+  if not exist "%DEST_ROOT%\%%D\" (
+    mkdir "%DEST_ROOT%\%%D" || (
+      echo Failed to create directory: "%DEST_ROOT%\%%D"
+      exit /b 6
+    )
   )
 )
 
@@ -39,13 +38,17 @@ if not exist "%SOURCE_ROOT%\Prompts\Inbox\" (
   exit /b 5
 )
 
-mkdir "%DEST_ROOT%\Prompts" || (
-  echo Failed to create directory: "%DEST_ROOT%\Prompts"
-  exit /b 6
+if not exist "%DEST_ROOT%\Prompts\" (
+  mkdir "%DEST_ROOT%\Prompts" || (
+    echo Failed to create directory: "%DEST_ROOT%\Prompts"
+    exit /b 6
+  )
 )
-mkdir "%DEST_ROOT%\Prompts\Inbox" || (
-  echo Failed to create directory: "%DEST_ROOT%\Prompts\Inbox"
-  exit /b 6
+if not exist "%DEST_ROOT%\Prompts\Inbox\" (
+  mkdir "%DEST_ROOT%\Prompts\Inbox" || (
+    echo Failed to create directory: "%DEST_ROOT%\Prompts\Inbox"
+    exit /b 6
+  )
 )
 
 for %%F in (AGENTS.md Info.md ROLE_EXECUTOR.md) do (
@@ -53,13 +56,15 @@ for %%F in (AGENTS.md Info.md ROLE_EXECUTOR.md) do (
     echo Missing required source file: "%SOURCE_ROOT%\%%F"
     exit /b 7
   )
-  copy /Y "%SOURCE_ROOT%\%%F" "%DEST_ROOT%\%%F" >nul || (
-    echo Failed to copy file: %%F
-    exit /b 8
+  if not exist "%DEST_ROOT%\%%F" (
+    copy /Y "%SOURCE_ROOT%\%%F" "%DEST_ROOT%\%%F" >nul || (
+      echo Failed to copy file: %%F
+      exit /b 8
+    )
   )
 )
 
-echo Structure created successfully: "%DEST_ROOT%"
+echo Structure ensured successfully: "%DEST_ROOT%"
 exit /b 0
 
 :usage
