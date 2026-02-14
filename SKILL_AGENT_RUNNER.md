@@ -12,7 +12,7 @@ Example: `cd /d C:\Temp\ProjectName\Executors && "C:\CorrisBot\Looper\CreateExec
 # Запуск агента-лупера
 - После создания файловой структуры запускается сам Лупер (как скрипт-терминала + ИИ агент). 
 - Создается через запуск бат файла:
-`C:\CorrisBot\Looper\StartLoopsInWT.bat "C:\CorrisBot\ProjectFolder_Template" "Executors\Executor_001"`
+`C:\CorrisBot\Looper\StartLoopsInWT.bat "<ProjectFolder>" "Executors\Executor_001"`
 Первый параметр - это путь до проекта, второй - название лупера. 
 Проектов в одном приложении может быть много (Пример вымышленный искать не нужно).
 Например, `c:\Minesweeper\.MigrationToIOs`  - Это проект миграции на iOs.
