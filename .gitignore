@@ -1,0 +1,10 @@
+# Runtime prompt queue and artifacts
+Prompts/
+Talker/Prompts
+Talker/Temp
+
+# Temp
+ProjectFolder_Template/Orchestrator/Temp
+ProjectFolder_Template/Temp
+
+CorrisBot.code-workspace
