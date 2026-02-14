@@ -449,6 +449,8 @@ class LoopRunner:
                     line = raw_line.rstrip("\r\n")
                     lines.append(line)
                     result_file.write(with_debug_timestamps(raw_line))
+                    # Keep Result.md observable for external stream readers (gateway).
+                    result_file.flush()
                     self.process_codex_line(line, started_commands)
                     try:
                         obj = json.loads(line)
@@ -495,6 +497,19 @@ class LoopRunner:
     def append_text(self, path: Path, text: str) -> None:
         with path.open("a", encoding="utf-8") as f:
             f.write(with_debug_timestamps(text))
+
+    @staticmethod
+    def parse_control_command(user_prompt_text: str) -> Optional[str]:
+        for raw_line in user_prompt_text.splitlines():
+            # Tolerate UTF-8 BOM from some writers without modifying prompt text for LLM.
+            line = raw_line.lstrip("\ufeff").strip()
+            if not line:
+                continue
+            normalized = " ".join(line.lower().split())
+            if normalized in {"/looper stop", "/loop stop"}:
+                return "stop"
+            return None
+        return None
 
     def warn_invalid_prompt_once(self, prompt_path: Path) -> None:
         warning_key = str(prompt_path).lower()
@@ -643,6 +658,24 @@ class LoopRunner:
             self.append_result_header(result_path, prompt_name)
 
             user_prompt_text = prompt_path.read_text(encoding="utf-8")
+            control_command = self.parse_control_command(user_prompt_text)
+            if control_command == "stop":
+                self.append_text(
+                    result_path,
+                    (
+                        "Looper control command received: stop\n"
+                        f"Sender: {sender_id}\n"
+                        f"Stopped: {now_str()}\n"
+                    ),
+                )
+                sender_last_processed_marker[sender_id] = marker
+                self.write_sender_state(sender_dir, thread_id, marker)
+                self.write_console_line(
+                    f"Stop command received from {sender_id}/{prompt_name}. Exiting loop.",
+                    "yellow",
+                )
+                return
+
             prompt_text = self.build_loop_prompt(user_prompt_text, sender_id)
             used_resume = bool(thread_id and thread_id.strip())
 
