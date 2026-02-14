@@ -60,14 +60,14 @@ Example:
 `C:\CorrisBot\Looper\CreateProjectStructure.bat "C:\Temp\.CreateProjectStructure_TEST"`
 
 What it does:
-- creates/completes the structure in `<PROJECT_ROOT_PATH>\.CorrisBot`
-- copies only the required files from `C:\CorrisBot\ProjectFolder_Template\.CorrisBot`
+- creates/completes the structure in `<PROJECT_ROOT_PATH>`
+- copies only the required files from `C:\CorrisBot\ProjectFolder_Template`
 - does not overwrite existing files
 
 
 ## RUN ORCHESTRATOR 
 
 - После создания нового проекта - запускать оркестратор для него.
-- Путь до оркестратора Обычно `<ProjectPath>\Orchestrator` или `<ProjectPath>.CorrisBot\Orchestrator`.
+- Путь до оркестратора обычно `<ProjectPath>\Orchestrator`.
 - Если пользователь просит запустить оркестратор - запускать запрошенный. Подразумевается, что стуктура уже создана.
 Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.

@@ -5,5 +5,4 @@
 - Read: `C:\CorrisBot\Talker\SKILL_TALKER.md`
 
 # ROLE ORCHESTRATOR
-- Read: `C:\CorrisBot\ProjectFolder_Template\.CorrisBot\Orchestrator\ROLE_ORCHESTRATOR.md`
-
+- Read: `C:\CorrisBot\ProjectFolder_Template\Orchestrator\ROLE_ORCHESTRATOR.md`
