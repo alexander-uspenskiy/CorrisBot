@@ -208,6 +208,7 @@ _TALKER_ROOT = ""
 _TALKER_INBOX_ROOT = ""
 _START_LOOPS_BAT = os.path.join(_LOOPER_ROOT, "StartLoopsInWT.bat")
 _SENDER_ID_OVERRIDE = os.environ.get("TALKER_SENDER_ID", "").strip()
+_SKIP_TALKER_BOOT = os.environ.get("GATEWAY_SKIP_TALKER_BOOT", "").strip().lower() in ("1", "true", "yes", "on")
 
 # Polling model (same style as looper: lightweight polling, no watchdog).
 _RESULT_POLL_ACTIVE_SEC = float(os.environ.get("RESULT_POLL_ACTIVE_SEC", "0.25"))
@@ -278,7 +279,7 @@ def _ensure_talker_looper_started():
 # --- Console output mode: "quiet" (default) or "full" ---
 _CONSOLE_MODE = "full"
 # Stream visibility controls for Telegram output
-_SHOW_REASONING = True
+_SHOW_REASONING = False
 _SHOW_COMMANDS = False
 
 # Ensure directory exists and load initial state
@@ -1355,12 +1356,15 @@ def main():
     print(f"[BOOT] Sender override = {_SENDER_ID_OVERRIDE}")
   print(f"[BOOT] Session storage: {_SESSION_DIR}/")
 
-  try:
-    _ensure_talker_looper_started()
-    print("[BOOT] Talker looper startup command sent.")
-  except Exception as e:
-    # Keep gateway alive. /run will retry and return actionable error to chat.
-    print(f"[WARN] Talker looper start failed at boot: {e}")
+  if _SKIP_TALKER_BOOT:
+    print("[BOOT] Talker looper startup skipped by GATEWAY_SKIP_TALKER_BOOT.")
+  else:
+    try:
+      _ensure_talker_looper_started()
+      print("[BOOT] Talker looper startup command sent.")
+    except Exception as e:
+      # Keep gateway alive. /run will retry and return actionable error to chat.
+      print(f"[WARN] Talker looper start failed at boot: {e}")
 
   app = Application.builder().token(TOKEN).build()
 

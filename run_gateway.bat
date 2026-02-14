@@ -3,11 +3,17 @@ setlocal
 set PATH=%PATH%;%APPDATA%\npm
 
 set "TALKER_ROOT=C:\CorrisBot\Talker"
+set "LOOPER_ROOT=C:\CorrisBot\Looper"
 set "WORKDIR=C:\CorrisBot\Gateways\Telegram"
-set "WT_WINDOW=CorrisBot-Talker"
+set "WT_WINDOW=CorrisBot"
 set "WT_EXE="
 if not exist "%TALKER_ROOT%\" (
   echo [ERROR] TALKER_ROOT not found: %TALKER_ROOT%
+  pause
+  exit /b 1
+)
+if not exist "%LOOPER_ROOT%\CodexLoop.bat" (
+  echo [ERROR] CodexLoop.bat not found: %LOOPER_ROOT%\CodexLoop.bat
   pause
   exit /b 1
 )
@@ -27,7 +33,7 @@ if not defined WT_EXE (
 if not defined WT_EXE goto :run_fallback
 
 :run_wt
-"%WT_EXE%" -w "%WT_WINDOW%" new-tab --title "Telegram Gateway" cmd /k cd /d "%WORKDIR%" ^&^& py tg_codex_gateway.py "%TALKER_ROOT%"
+"%WT_EXE%" -w "%WT_WINDOW%" new-tab --title "Telegram Gateway" --suppressApplicationTitle cmd /k cd /d "%WORKDIR%" ^&^& set "GATEWAY_SKIP_TALKER_BOOT=1" ^&^& py tg_codex_gateway.py "%TALKER_ROOT%" ; split-pane -V --title "Talker [Talker/Agents-01]" --suppressApplicationTitle cmd /k ""%LOOPER_ROOT%\CodexLoop.bat" "%TALKER_ROOT%" ".""
 if %errorlevel%==0 exit /b 0
 echo [WARN] Failed to start Windows Terminal tab, fallback to direct run.
 
