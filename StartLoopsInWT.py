@@ -13,7 +13,7 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 DEFAULT_LAYOUT: dict[str, Any] = {
-    "window_name_template": "CorrisBot-{project}",
+    "window_name_template": "CorrisBot",
     "tab_name_prefix": "Agents",
     "max_panes_per_tab": 4,
     "split_sequence": ["-H", "-V", "-H"],
@@ -218,6 +218,16 @@ def get_loop_invocation(loop_bat_path: Path, project_root: Path, agent_path: str
     return f'"{loop_bat_path}" "{project_root}" "{agent_path}"'
 
 
+def escape_for_cmd(text: str) -> str:
+    return (
+        text.replace("^", "^^")
+        .replace("&", "^&")
+        .replace("|", "^|")
+        .replace("<", "^<")
+        .replace(">", "^>")
+    )
+
+
 def load_json_file(path: Path) -> dict[str, Any]:
     try:
         raw = path.read_text(encoding="utf-8")
@@ -419,6 +429,7 @@ def main() -> int:
     agent_label = agent_path.replace("\\", "/")
     pane_title = f"{agent_label} [{project_tag}/{tab_label}]"
     loop_cmd = get_loop_invocation(loop_bat_path, project_root, agent_path)
+    cmd_line = f"title {escape_for_cmd(pane_title)} && {loop_cmd}"
 
     if pane_index == 0:
         wt_args = [
@@ -430,7 +441,7 @@ def main() -> int:
             "--suppressApplicationTitle",
             "cmd",
             "/k",
-            loop_cmd,
+            cmd_line,
         ]
     else:
         orientation = split_sequence[(pane_index - 1) % len(split_sequence)]
@@ -448,7 +459,7 @@ def main() -> int:
             "--suppressApplicationTitle",
             "cmd",
             "/k",
-            loop_cmd,
+            cmd_line,
         ]
 
     print(f"Project root: {project_root}")

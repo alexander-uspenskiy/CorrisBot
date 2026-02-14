@@ -336,6 +336,9 @@ class LoopRunner:
         rules = (
             "Loop execution rules (strict):\n"
             "- Process exactly one user prompt from this iteration.\n"
+            "- Before taking action, read AGENTS.md in the current agent folder and then read all files referenced by `Read:` links (recursively).\n"
+            "- Follow role boundaries from the loaded instructions strictly; do not perform actions explicitly prohibited by your role.\n"
+            "- If the prompt asks to pass work to another looper and report back here, treat it as synchronous by default: do not finish the turn until you relay the obtained result (unless async mode was explicitly requested).\n"
             "- For app launch/close tasks, execute action immediately, then do a quick verification.\n"
             "- If quick verification is negative or uncertain, wait at least 5 seconds and verify again before concluding failure.\n"
             "- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.\n"

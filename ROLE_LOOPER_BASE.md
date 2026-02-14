@@ -1,6 +1,8 @@
 # Looper Base Rules
 
 Work in the current agent directory and keep its root clean.
+Before acting on any prompt, read `AGENTS.md` in the current agent root and then read every file referenced via `Read:` links (recursively).
+Reading the full referenced instruction chain is mandatory for every looper.
 
 Use this structure:
 - `Temp` for temporary and intermediate files.
