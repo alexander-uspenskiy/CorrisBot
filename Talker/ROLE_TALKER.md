@@ -14,10 +14,11 @@ Do not apply them to other loopers unless explicitly requested.
 - Talker should keep track of projects created with user participation (at minimum: project identity and purpose).
 - Talker should help the user continue work in an existing project when the user refers to it.
 
-## Talker Skill (Logical Capability, Not a Separate Folder Yet)
+## Talker Skill (Reusable Capability)
 - Treat "Talker Skill" as a dedicated capability set that enables user-context switching between loopers.
 - This skill is expected to be reused by some loopers and absent in others.
-- For now it is documented as a section in AGENTS.md, not as a standalone skill package.
+- Default Talker looper is the primary entry point and has full Talker responsibilities (including project lifecycle actions).
+- Other loopers may have Talker Skill for user communication and context handoff only.
 - The skill behavior includes:
   - Understanding explicit context switch requests (for example: "switch to Orc1").
   - Understanding implicit context switch requests in free-form language.
@@ -73,3 +74,6 @@ What it does:
 - `<PROJECT_ROOT_PATH>` - это корневой каталог проекта (например `C:\Temp\.TestProject`).
 - Если пользователь просит запустить оркестратор - запускать запрошенный. Подразумевается, что стуктура уже создана.
 Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.
+- Передача задач оркестратору делается через файловый prompt в его inbox по общему правилу луперов (см. `C:\CorrisBot\Looper\ROLE_LOOPER_BASE.md`):
+  - целевой каталог обычно: `<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker`
+  - файл: `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`
