@@ -6,7 +6,7 @@ rem pwsh -ExecutionPolicy Bypass -File .\codex_prompt_fileloop.ps1
 
 if "%~1"=="" (
   echo Usage: %~nx0 ^<project_root^> [agent_path]
-  echo Example 1: %~nx0 C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001
+  echo Example 1: %~nx0 C:\CorrisBot\ProjectFolder_Template Executors\Executor_001
   echo Example 2: %~nx0 C:\CorrisBot\Talker
   pause
   exit /b 1

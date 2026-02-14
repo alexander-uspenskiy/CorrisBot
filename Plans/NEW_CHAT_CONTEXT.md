@@ -24,7 +24,7 @@ Goal: reusable file-based looper for multi-agent platform (Orchestrator / Execut
 - anti-duplicate check
 - fill panes up to max per tab
 - then open next tab
-- persistent allocation state in `.CorrisBot\Temp\wt_layout_state.json`
+- persistent allocation state in `Temp\wt_layout_state.json`
 
 ## Current Launch Contracts
 - Run looper directly:
@@ -34,8 +34,8 @@ Goal: reusable file-based looper for multi-agent platform (Orchestrator / Execut
 
 Example:
 ```bat
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Orchestrator
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Orchestrator
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Executors\Executor_001
 ```
 
 ## Important Prompting Behavior Learned

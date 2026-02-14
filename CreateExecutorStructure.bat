@@ -5,7 +5,7 @@ if "%~1"=="" goto :usage
 if "%~2"=="" goto :usage
 if not "%~3"=="" goto :usage
 
-set "SOURCE_ROOT=C:\CorrisBot\ProjectFolder_Template\.CorrisBot\Executors\Executor_001"
+set "SOURCE_ROOT=C:\CorrisBot\ProjectFolder_Template\Executors\Executor_001"
 set "SUBFOLDER_NAME=%~1"
 set "ORCHESTRATOR_NAME=%~2"
 set "DEST_ROOT=%CD%\%SUBFOLDER_NAME%"

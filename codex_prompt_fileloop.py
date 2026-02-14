@@ -721,7 +721,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--project-root",
         required=True,
-        help="Path to .CorrisBot project root.",
+        help="Path to project root.",
     )
     parser.add_argument(
         "--agent-path",

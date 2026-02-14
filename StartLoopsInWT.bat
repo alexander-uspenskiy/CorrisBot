@@ -37,9 +37,9 @@ exit /b 0
 
 :usage
 echo Usage: %~nx0 ^<project_root^> [agent_path] [--dry-run]
-echo Example 1: %~nx0 C:\CorrisBot\ProjectFolder_Template\.CorrisBot Orchestrator
-echo Example 2: %~nx0 C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001
+echo Example 1: %~nx0 C:\CorrisBot\ProjectFolder_Template Orchestrator
+echo Example 2: %~nx0 C:\CorrisBot\ProjectFolder_Template Executors\Executor_001
 echo Example 3: %~nx0 C:\CorrisBot\Talker
 echo Example 4: %~nx0 C:\CorrisBot\Talker --dry-run
-echo Example 5: %~nx0 C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001 --dry-run
+echo Example 5: %~nx0 C:\CorrisBot\ProjectFolder_Template Executors\Executor_001 --dry-run
 exit /b 1

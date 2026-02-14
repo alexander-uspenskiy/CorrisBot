@@ -2,9 +2,8 @@
 setlocal
 
 if "%~1"=="" (
-  echo Usage: %~nx0 ^<project_path_or_dotCorrisBot_path^>
+  echo Usage: %~nx0 ^<project_path^>
   echo Example 1: %~nx0 C:\CorrisBot\ProjectFolder_Template
-  echo Example 2: %~nx0 C:\CorrisBot\ProjectFolder_Template\.CorrisBot
   pause
   exit /b 1
 )
@@ -15,8 +14,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "$inputPath = [System.IO.Path]::GetFullPath('%INPUT_PATH%');" ^
   "if (-not (Test-Path -LiteralPath $inputPath)) { throw \"Path not found: $inputPath\" };" ^
-  "$dot = Join-Path $inputPath '.CorrisBot';" ^
-  "if (Test-Path -LiteralPath $dot) { $root = $dot } else { $root = $inputPath };" ^
+  "$root = $inputPath;" ^
   "Write-Host ('Cleanup root: ' + $root);" ^
   "$promptsDirs = Get-ChildItem -LiteralPath $root -Recurse -Directory -Filter 'Prompts' -ErrorAction SilentlyContinue;" ^
   "if (-not $promptsDirs) { Write-Host 'No Prompts directories found.'; exit 0 };" ^

@@ -25,19 +25,12 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def resolve_dot_corrisbot_root(path_text: str) -> Path:
-    full = Path(path_text).expanduser().resolve()
-    dot = full / ".CorrisBot"
-    if dot.is_dir():
-        return dot
-    return full
+def resolve_project_root(path_text: str) -> Path:
+    return Path(path_text).expanduser().resolve()
 
 
 def get_project_tag(project_root: Path) -> str:
-    leaf = project_root.name
-    if leaf.lower() == ".corrisbot":
-        return project_root.parent.name
-    return leaf
+    return project_root.name
 
 
 def normalize_agent_path(agent_path: str) -> str:
@@ -347,7 +340,7 @@ def run_wt_command(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch one looper in Windows Terminal with dynamic pane allocation.")
-    parser.add_argument("project_root", help="Path to .CorrisBot root or parent project directory.")
+    parser.add_argument("project_root", help="Path to project root directory.")
     parser.add_argument("agent_path", help="Agent path relative to project root (for example, Executors\\Executor_001).")
     parser.add_argument(
         "--config-path",
@@ -361,7 +354,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    project_root = resolve_dot_corrisbot_root(args.project_root)
+    project_root = resolve_project_root(args.project_root)
     if not project_root.is_dir():
         raise RuntimeError(f"Project root not found: {project_root}")
 

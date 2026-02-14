@@ -33,7 +33,7 @@
 - `[ProjectFolder_Template] Orchestrator`
 - `[ProjectFolder_Template] Executors/Executor_001`
 
-`ProjectTag` берется из имени каталога проекта (родитель `.CorrisBot`).
+`ProjectTag` берется из имени каталога проекта.
 
 ## Стратегия запуска (fire-and-forget)
 Для запуска дочерних луперов использовать `wt`-команды (new-tab/split-pane), без ожидания завершения процесса.

@@ -10,14 +10,14 @@ StartLoopsInWT.bat <project_root> <agent_path>
 Examples:
 
 ```bat
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Orchestrator
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Orchestrator
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Executors\Executor_001
 ```
 
 Optional:
 
 ```bat
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Executor_001 --dry-run
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Executors\Executor_001 --dry-run
 ```
 
 ## Behavior
@@ -25,7 +25,7 @@ StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template\.CorrisBot Executors\Exec
 - If the same agent is already running, launch is skipped.
 - Fills panes sequentially inside a tab up to `max_panes_per_tab`.
 - Opens a new tab when current tab is full.
-- Uses state file from config (default: `.CorrisBot\Temp\wt_layout_state.json`).
+- Uses state file from config (default: `Temp\wt_layout_state.json`).
 
 ## Config
 Layout config path:
