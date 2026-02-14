@@ -1,8 +1,12 @@
 # Looper Base Rules
 
 Work in the current agent directory and keep its root clean.
-Before acting on any prompt, read `AGENTS.md` in the current agent root and then read every file referenced via `Read:` links (recursively).
-Reading the full referenced instruction chain is mandatory for every looper.
+
+## Critical Rules (Mandatory)
+
+- Follow role boundaries from loaded instructions strictly; do not perform actions explicitly prohibited by your role.
+- If a prompt asks to pass work to another looper and report back here, treat it as synchronous by default.
+  Finish the turn only after you relay the obtained result, unless async mode was explicitly requested.
 
 Use this structure:
 - `Temp` for temporary and intermediate files.
