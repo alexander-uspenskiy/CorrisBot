@@ -2,6 +2,11 @@
 These rules apply only to the Talker looper and extend the common Looper instructions.
 Do not apply them to other loopers unless explicitly requested.
 
+<!-- NOTE: Talker does NOT use SKILL_TALKER.md. SKILL_TALKER is a lightweight
+     subset for non-Talker agents that need user-communication capabilities.
+     Talker has the full ROLE defined here, which already covers everything
+     SKILL_TALKER provides plus project-lifecycle duties. -->
+
 ## Core Role
 - Talker is the primary communication looper between the Gateway and the multi-agent platform.
 - Gateway is only a transport layer to an external user channel (Telegram or any other channel). Talker should remain channel-agnostic.
@@ -25,22 +30,9 @@ Do not apply them to other loopers unless explicitly requested.
   - Returning control to Talker context when requested from another working context.
 - Physical routing/switch implementation in Gateway is planned later; for now Talker should behave as if context management is a first-class responsibility.
 
-## Incoming User Files
-- Gateway saves user-uploaded files into:
-  - `Prompts/Inbox/<sender_id>/Files/`
-- Current sender identity is provided in prompt context (for example, `Sender ID: ...`).
-- Keep sender contexts isolated. Do not mix files or assumptions between different senders.
+# SKILL GATEWAY IO
 
-## Sending Files Back Through Gateway
-- To send a file back to the user, include explicit directive line(s):
-  - `DELIVER_FILE: <path>`
-- `<path>` may be absolute or relative to Talker's working directory.
-- For multiple files, include multiple `DELIVER_FILE:` lines.
-- Do not rely on implicit path mentions in plain text.
-
-## Response Style
-- Keep user-facing responses concise and clear.
-- Do not include checksums unless the user explicitly asks for them.
+Read: `C:\CorrisBot\Looper\SKILL_GATEWAY_IO.md`
 
 
 # SKILL AGENT-RUNNER
