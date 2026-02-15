@@ -27,7 +27,6 @@
 #   /id                 -> show your chat_id
 #   /agent              -> show current gateway/looper state
 #   /setagent <name>    -> set current agent (supported: looper)
-#   /run <text>         -> explicitly run text via current agent (same as plain text)
 #   /reset_session      -> reset current sender queue/session
 #   /reset_all          -> reset all sender queues
 #   /reset              -> alias of /reset_session
@@ -41,7 +40,7 @@
 #   /help               -> list all available bot commands
 #
 # SECURITY:
-#   Only ALLOWED_CHAT_ID can run agent commands (/run, plain text forwarding,
+#   Only ALLOWED_CHAT_ID can run agent commands (plain text forwarding,
 #   /setagent, /reset*).
 #   /id is allowed for everyone (so you can discover chat_id), but is still echoed to console.
 
@@ -1403,7 +1402,6 @@ async def _submit_prompt(update: Update, prompt: str, source: str) -> Optional[s
     _append_raw(session_stdout_path, f"\n=== SUBMIT marker={marker} sender={sender_id} source={source} ===\n")
     _append_raw(session_stdout_path, f"Prompt file: {prompt_path}\n")
     _append_raw(session_stdout_path, f"Result file: {result_path}\n")
-    await update.message.reply_text(f"Accepted. marker={marker}")
     return marker
   except Exception as e:
     status = "error"
@@ -1636,7 +1634,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /id - show your chat_id
 /agent - show gateway/looper state
 /setagent <name> - set agent (supported: looper)
-/run <text> - run text via current agent
 /reset_session - reset current sender queue/session
 /reset_all - reset all sender queues
 /reset - alias of /reset_session
@@ -1728,20 +1725,6 @@ async def cmd_show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _SHOW_COMMANDS = value
   await update.message.reply_text(f"OK. show_commands = {_SHOW_COMMANDS}")
 
-async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  _echo_console(update)
-
-  if not _is_allowed(update):
-    await update.message.reply_text("Access denied.")
-    return
-
-  prompt = " ".join(context.args).strip()
-  if not prompt:
-    await update.message.reply_text("Usage: /run <text>")
-    return
-
-  await _submit_prompt(update, prompt, source="command:/run")
-
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
   # Any non-command text is treated as a prompt for the current agent.
   _echo_console(update)
@@ -1783,7 +1766,7 @@ def main():
       _ensure_talker_looper_started()
       print("[BOOT] Talker looper startup command sent.")
     except Exception as e:
-      # Keep gateway alive. /run will retry and return actionable error to chat.
+      # Keep gateway alive. The next user message will retry and return actionable error to chat.
       print(f"[WARN] Talker looper start failed at boot: {e}")
 
   app = Application.builder().token(TOKEN).post_init(_app_post_init).post_shutdown(_app_post_shutdown).build()
@@ -1796,7 +1779,6 @@ def main():
   app.add_handler(CommandHandler("reset_all", cmd_reset_all))
   app.add_handler(CommandHandler("reset", cmd_reset))
   app.add_handler(CommandHandler("new_session", cmd_reset))
-  app.add_handler(CommandHandler("run", cmd_run))
   app.add_handler(CommandHandler("loginstatus", cmd_loginstatus))
   app.add_handler(CommandHandler("help", cmd_help))
   app.add_handler(CommandHandler("console", cmd_console))
