@@ -40,6 +40,8 @@ Gateways/Telegram/sessions/
 Gateways/Telegram/prompts/
 Gateways/Telegram/exports/
 Gateways/Telegram/.gateway.lock
+Gateways/Telegram/gateway_delivery_state.json
+Gateways/Telegram/gateway_delivery_state.json.tmp
 
 # Telegram gateway project-specific
 Gateways/Telegram/Icons/
