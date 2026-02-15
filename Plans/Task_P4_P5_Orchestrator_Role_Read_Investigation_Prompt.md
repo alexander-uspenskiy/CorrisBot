@@ -23,6 +23,17 @@
 
 Обе аномалии похожи на сценарий, где роль Orchestrator не была применена (или применена частично/неверно).
 
+## Источник истины по инструкциям (критично)
+- Текущие файлы в рабочем дереве (`AGENTS.md`, `AGENTS_TEMPLATE.md`, `ROLE_*.md`) могли измениться после инцидента, поэтому сами по себе не считаются надежным источником для выводов о моменте прогона.
+- Для выводов о том, какие правила **должны были действовать в момент запуска**, используй только версии из Git на временной срез инцидента.
+- Базовая точка времени инцидента: `2026-02-15 01:54:42` (старт обработки Orchestrator по `Prompt_2026_02_15_01_54_40_865.md`).
+- Обязательно извлеки из Git (на момент инцидента, или ближайший коммит до этой точки) и используй в сравнении:
+  - `ProjectFolder_Template/Orchestrator/AGENTS_TEMPLATE.md`
+  - `ProjectFolder_Template/Orchestrator/ROLE_ORCHESTRATOR.md`
+  - `Looper/ROLE_LOOPER_BASE.md`
+  - связанные сборочные/launch-файлы, если они участвуют в объяснении причины.
+- Runtime snapshot в `C:\Temp\...` использовать как артефакт фактического поведения, но не как единственный источник нормативных правил.
+
 ## Артефакты (обязательные источники)
 ### 1) Talker-side лог прогона
 - `C:\CorrisBot\Talker\Prompts\Inbox\tg_corriscant\Prompt_2026_02_15_01_53_53_590.md`
@@ -40,6 +51,10 @@
 - `C:\Temp\CorrisBot_TestProject_3\Orchestrator\Prompts\Inbox\Talker\Prompt_2026_02_15_01_54_40_865_Result.md`
 - `C:\Temp\CorrisBot_TestProject_3\Talker\Prompts\Inbox\Orc_CorrisBot_TestProject_3\Prompt_2026_02_15_01_58_23_538.md`
 
+Важно:
+- Эти файлы отражают факт исполнения, но не гарантируют, что их текущий текст совпадает с тем, что было в репозитории на момент запуска.
+- Для нормативной части всегда сверяйся с историческими версиями из Git.
+
 ### 3) Скриптовая цепочка создания/запуска (для проверки порядка сборки и cwd)
 - `C:\CorrisBot\Looper\CreateProjectStructure.bat`
 - `C:\CorrisBot\Looper\StartLoopsInWT.py`
@@ -55,7 +70,8 @@
 - когда Orchestrator отправил отчет в project Talker inbox.
 
 2. Проверь, какой именно instruction-set был доступен Orchestrator во время прогона:
-- из snapshot `C:\Temp\CorrisBot_TestProject_3\Orchestrator\AGENTS.md`;
+- сначала восстанови исторические версии инструкций из Git на момент инцидента;
+- затем сопоставь их со snapshot `C:\Temp\CorrisBot_TestProject_3\Orchestrator\AGENTS.md`;
 - отдельно выдели правила про:
   - обязательность делегирования кода исполнителям;
   - ограничение на самостоятельную реализацию кода;
