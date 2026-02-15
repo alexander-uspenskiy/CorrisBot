@@ -1,10 +1,54 @@
-# Runtime prompt queue and artifacts
+# Global Python/cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Global virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Global IDE/editor
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Global OS files
+.DS_Store
+Thumbs.db
+
+# Root runtime prompt queue and artifacts
 Prompts/
 Talker/Prompts
 Talker/Temp
 
-# Temp
+# Root temp
 ProjectFolder_Template/Orchestrator/Temp
 ProjectFolder_Template/Temp
 
+# Telegram gateway logs and runtime artifacts
+Gateways/Telegram/*_stdout.log
+Gateways/Telegram/*_stderr.log
+Gateways/Telegram/_tg_last_message.txt
+Gateways/Telegram/_Temp/
+Gateways/Telegram/sessions/
+Gateways/Telegram/prompts/
+Gateways/Telegram/exports/
+Gateways/Telegram/.gateway.lock
+
+# Telegram gateway project-specific
+Gateways/Telegram/Icons/
+Gateways/Telegram/CorrisBot.md
+
+# Looper runtime artifacts
+Looper/Prompts/
+Looper/Prompt_*.md
+
+# Workspace files
 CorrisBot.code-workspace
+Looper/Looper.code-workspace
