@@ -11,7 +11,7 @@
 #   1) Gateway writes a prompt file into Talker inbox using atomic rename:
 #      temp file -> Prompt_YYYY_MM_DD_HH_MM_SS_mmm(.suffix).md
 #   2) Looper processes prompt and appends events to Prompt_..._Result.md
-#   3) Gateway polls that result file and streams meaningful events back to Telegram.
+#   3) Background worker polls all result files and delivers new events to Telegram.
 #
 # Setup:
 #   1) Create a bot with @BotFather and get TELEGRAM_BOT_TOKEN
@@ -50,17 +50,18 @@ import sys
 import json
 import time
 import uuid
+import hashlib
 import argparse
 import atexit
 import asyncio
 import re
 import shutil
 import subprocess
-from typing import Dict, List, Optional, Set, Tuple
+import threading
+from typing import Any, Dict, List, Optional, Set, Tuple
 from datetime import datetime
 
 from telegram import Update
-from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 # --- Single instance lock ---
@@ -213,16 +214,12 @@ _SKIP_TALKER_BOOT = os.environ.get("GATEWAY_SKIP_TALKER_BOOT", "").strip().lower
 # Polling model (same style as looper: lightweight polling, no watchdog).
 _RESULT_POLL_ACTIVE_SEC = float(os.environ.get("RESULT_POLL_ACTIVE_SEC", "0.25"))
 _RESULT_POLL_IDLE_SEC = float(os.environ.get("RESULT_POLL_IDLE_SEC", "0.75"))
-_RESULT_START_TIMEOUT_SEC = float(os.environ.get("RESULT_START_TIMEOUT_SEC", "120"))
-_RESULT_TOTAL_TIMEOUT_SEC = float(os.environ.get("RESULT_TOTAL_TIMEOUT_SEC", "1800"))
-_RESULT_FINISHED_IDLE_SEC = float(os.environ.get("RESULT_FINISHED_IDLE_SEC", "1.0"))
 
 _PROMPT_TIMESTAMP_RE = re.compile(
   r"^(?P<year>\d{4})_(?P<month>\d{2})_(?P<day>\d{2})_"
   r"(?P<hour>\d{2})_(?P<minute>\d{2})_(?P<second>\d{2})_"
   r"(?P<millis>\d{3})(?:_(?P<suffix>[A-Za-z0-9]+))?$"
 )
-_JSON_DECODER = json.JSONDecoder()
 
 _TALKER_LOOPER_STARTED = False
 
@@ -291,8 +288,20 @@ if _CURRENT_SESSION_DIR is None:
 # --- File delivery settings ---
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB Telegram limit
 
-# --- Concurrency protection ---
-_RUN_LOCK = asyncio.Lock()
+# --- Async submit + delivery runtime ---
+_BOOT_LOCK = asyncio.Lock()
+_SUBMIT_LOCK = asyncio.Lock()
+_DELIVERY_SEND_LOCK = asyncio.Lock()
+_DELIVERY_TASK: Optional[asyncio.Task] = None
+_DELIVERY_STOP_EVENT: Optional[asyncio.Event] = None
+_DELIVERY_STATE_PATH = os.path.join(os.getcwd(), "gateway_delivery_state.json")
+_DELIVERY_STATE_VERSION = 2
+_DELIVERY_STATE: Dict[str, Any] = {}
+_DELIVERY_STATE_LOADED = False
+_DELIVERY_STATE_WAS_FRESH = False
+_DELIVERY_STATE_LOCK = threading.Lock()
+_DELIVERY_MAX_EVENT_KEYS_PER_RESULT = 4000
+
 def _is_allowed(update: Update) -> bool:
   chat = update.effective_chat
   return bool(chat) and chat.id == ALLOWED_CHAT_ID_INT
@@ -418,7 +427,6 @@ def _write_prompt_atomic(prompt_path: str, text: str):
     except Exception:
       pass
 
-
 def _resolve_codex_path() -> str:
   # Try to find codex in PATH, fallback to known npm location (Windows).
   codex_path = shutil.which("codex") or shutil.which("codex.cmd")
@@ -429,26 +437,345 @@ def _resolve_codex_path() -> str:
     return npm_path
   return "codex"  # Let it fail with FileNotFoundError
 
-async def _typing_loop(chat, stop_event: asyncio.Event):
-  """Send typing action every ~4 seconds until stop_event is set."""
-  while not stop_event.is_set():
-    try:
-      await chat.send_action(ChatAction.TYPING)
-    except Exception as e:
-      print(f"[WARN] Failed to send typing action: {e}")
-    try:
-      await asyncio.wait_for(stop_event.wait(), timeout=4)
-    except asyncio.TimeoutError:
-      continue
+def _delivery_now_str() -> str:
+  return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-async def _stop_typing_task(stop_event: asyncio.Event, task: asyncio.Task):
-  """Stop typing loop and cleanup task."""
-  stop_event.set()
-  task.cancel()
+def _parse_prompt_sort_key(marker: str) -> Optional[Tuple[int, int, int, int, int, int, int, str]]:
+  match = _PROMPT_TIMESTAMP_RE.fullmatch((marker or "").strip())
+  if not match:
+    return None
+  year = int(match.group("year"))
+  month = int(match.group("month"))
+  day = int(match.group("day"))
+  hour = int(match.group("hour"))
+  minute = int(match.group("minute"))
+  second = int(match.group("second"))
+  millis = int(match.group("millis"))
+  suffix = match.group("suffix") or ""
   try:
-    await task
-  except asyncio.CancelledError:
-    pass
+    datetime(year, month, day, hour, minute, second, millis * 1000)
+  except ValueError:
+    return None
+  return year, month, day, hour, minute, second, millis, suffix
+
+def _extract_result_marker(file_name: str) -> Optional[str]:
+  if not (file_name.startswith("Prompt_") and file_name.endswith("_Result.md")):
+    return None
+  marker = file_name[len("Prompt_"):-len("_Result.md")]
+  if _parse_prompt_sort_key(marker) is None:
+    return None
+  return marker
+
+def _new_delivery_state() -> Dict[str, Any]:
+  return {
+    "version": _DELIVERY_STATE_VERSION,
+    "epoch": 0,
+    "global_min_marker": "",
+    "sender_min_marker": {},
+    "sender_chat_ids": {},
+    "result_offsets": {},
+    "updated_at": _delivery_now_str(),
+  }
+
+def _load_delivery_state():
+  global _DELIVERY_STATE, _DELIVERY_STATE_LOADED, _DELIVERY_STATE_WAS_FRESH
+  if _DELIVERY_STATE_LOADED:
+    return
+  fresh = False
+  state = _new_delivery_state()
+  if os.path.isfile(_DELIVERY_STATE_PATH):
+    try:
+      with open(_DELIVERY_STATE_PATH, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+      if isinstance(raw, dict):
+        try:
+          state["epoch"] = max(0, int(raw.get("epoch", 0)))
+        except Exception:
+          state["epoch"] = 0
+        state["global_min_marker"] = str(raw.get("global_min_marker") or "")
+        state["sender_min_marker"] = dict(raw.get("sender_min_marker") or {})
+        state["sender_chat_ids"] = dict(raw.get("sender_chat_ids") or {})
+        state["result_offsets"] = dict(raw.get("result_offsets") or {})
+        state["updated_at"] = str(raw.get("updated_at") or _delivery_now_str())
+    except Exception as e:
+      print(f"[WARN] Failed to read delivery state, starting fresh: {e}")
+      fresh = True
+  else:
+    fresh = True
+
+  _DELIVERY_STATE = state
+  _DELIVERY_STATE_LOADED = True
+  _DELIVERY_STATE_WAS_FRESH = fresh
+
+def _save_delivery_state() -> bool:
+  if not _DELIVERY_STATE_LOADED:
+    return True
+  last_error = None
+  for attempt in range(0, 3):
+    try:
+      payload = {
+        "version": _DELIVERY_STATE_VERSION,
+        "epoch": int(_DELIVERY_STATE.get("epoch", 0)),
+        "global_min_marker": str(_DELIVERY_STATE.get("global_min_marker") or ""),
+        "sender_min_marker": _DELIVERY_STATE.get("sender_min_marker", {}),
+        "sender_chat_ids": _DELIVERY_STATE.get("sender_chat_ids", {}),
+        "result_offsets": _DELIVERY_STATE.get("result_offsets", {}),
+        "updated_at": _delivery_now_str(),
+      }
+      tmp_path = _DELIVERY_STATE_PATH + ".tmp"
+      with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+      os.replace(tmp_path, _DELIVERY_STATE_PATH)
+      return True
+    except Exception as e:
+      last_error = e
+      if attempt < 2:
+        time.sleep(0.05)
+  print(f"[WARN] Failed to save delivery state: {last_error}")
+  return False
+
+def _result_state_key(sender_id: str, result_name: str) -> str:
+  return f"{sender_id}/{result_name}"
+
+def _get_result_entry(sender_id: str, result_name: str) -> Dict[str, Any]:
+  offsets = _DELIVERY_STATE.setdefault("result_offsets", {})
+  key = _result_state_key(sender_id, result_name)
+  raw = offsets.get(key)
+  if not isinstance(raw, dict):
+    raw = {}
+  raw.setdefault("offset", 0)
+  raw.setdefault("completed", False)
+  raw.setdefault("delivered_event_keys", [])
+  raw.setdefault("updated_at", _delivery_now_str())
+  offsets[key] = raw
+  return raw
+
+def _get_result_offset(sender_id: str, result_name: str) -> int:
+  raw = _get_result_entry(sender_id, result_name)
+  try:
+    return max(0, int(raw.get("offset", 0)))
+  except Exception:
+    return 0
+
+def _get_result_completed(sender_id: str, result_name: str) -> bool:
+  raw = _get_result_entry(sender_id, result_name)
+  return bool(raw.get("completed", False))
+
+def _get_result_delivered_event_keys(sender_id: str, result_name: str) -> Set[str]:
+  raw = _get_result_entry(sender_id, result_name)
+  values = raw.get("delivered_event_keys")
+  if not isinstance(values, list):
+    return set()
+  result: Set[str] = set()
+  for value in values:
+    if not value:
+      continue
+    result.add(str(value))
+  return result
+
+def _append_result_delivered_event_key(sender_id: str, result_name: str, event_key: str):
+  raw = _get_result_entry(sender_id, result_name)
+  values = raw.get("delivered_event_keys")
+  if not isinstance(values, list):
+    values = []
+  values = [str(v) for v in values if v]
+  if event_key in values:
+    raw["delivered_event_keys"] = values
+    return
+  values.append(event_key)
+  if len(values) > _DELIVERY_MAX_EVENT_KEYS_PER_RESULT:
+    values = values[-_DELIVERY_MAX_EVENT_KEYS_PER_RESULT:]
+  raw["delivered_event_keys"] = values
+
+def _set_result_state(sender_id: str, result_name: str, offset: int, completed: bool,
+                      delivered_event_keys: Optional[Any] = None):
+  entry = {
+    "offset": int(max(0, offset)),
+    "completed": bool(completed),
+    "delivered_event_keys": [],
+    "updated_at": _delivery_now_str(),
+  }
+  if delivered_event_keys:
+    if isinstance(delivered_event_keys, list):
+      ordered = [str(v) for v in delivered_event_keys if v]
+    else:
+      ordered = [str(v) for v in delivered_event_keys if v]
+    if len(ordered) > _DELIVERY_MAX_EVENT_KEYS_PER_RESULT:
+      ordered = ordered[-_DELIVERY_MAX_EVENT_KEYS_PER_RESULT:]
+    entry["delivered_event_keys"] = ordered
+  offsets = _DELIVERY_STATE.setdefault("result_offsets", {})
+  key = _result_state_key(sender_id, result_name)
+  offsets[key] = entry
+
+def _get_state_epoch() -> int:
+  try:
+    return int(_DELIVERY_STATE.get("epoch", 0))
+  except Exception:
+    return 0
+
+def _bump_state_epoch() -> int:
+  epoch = _get_state_epoch() + 1
+  _DELIVERY_STATE["epoch"] = epoch
+  return epoch
+
+def _set_sender_chat(sender_id: str, chat_id: int):
+  mapping = _DELIVERY_STATE.setdefault("sender_chat_ids", {})
+  mapping[sender_id] = int(chat_id)
+
+def _get_sender_chat(sender_id: str) -> Optional[int]:
+  mapping = _DELIVERY_STATE.get("sender_chat_ids", {})
+  raw = mapping.get(sender_id)
+  if raw is None:
+    return None
+  try:
+    return int(raw)
+  except Exception:
+    return None
+
+def _forget_sender_delivery_state(sender_id: str):
+  mapping = _DELIVERY_STATE.get("sender_chat_ids", {})
+  if isinstance(mapping, dict):
+    mapping.pop(sender_id, None)
+  offsets = _DELIVERY_STATE.get("result_offsets", {})
+  if isinstance(offsets, dict):
+    to_delete = [k for k in offsets.keys() if k.startswith(f"{sender_id}/")]
+    for key in to_delete:
+      offsets.pop(key, None)
+
+def _forget_all_delivery_state():
+  _DELIVERY_STATE["global_min_marker"] = ""
+  _DELIVERY_STATE["sender_min_marker"] = {}
+  _DELIVERY_STATE["sender_chat_ids"] = {}
+  _DELIVERY_STATE["result_offsets"] = {}
+
+def _set_sender_min_marker(sender_id: str, marker: str):
+  markers = _DELIVERY_STATE.setdefault("sender_min_marker", {})
+  markers[sender_id] = marker
+
+def _set_global_min_marker(marker: str):
+  _DELIVERY_STATE["global_min_marker"] = marker
+
+def _marker_is_older(marker: str, min_marker: str) -> bool:
+  if not min_marker:
+    return False
+  marker_key = _parse_prompt_sort_key(marker)
+  floor_key = _parse_prompt_sort_key(min_marker)
+  if marker_key is None or floor_key is None:
+    return False
+  return marker_key < floor_key
+
+def _is_marker_blocked_by_reset(sender_id: str, marker: str) -> bool:
+  global_floor = str(_DELIVERY_STATE.get("global_min_marker") or "")
+  sender_floor = str((_DELIVERY_STATE.get("sender_min_marker") or {}).get(sender_id) or "")
+  return _marker_is_older(marker, global_floor) or _marker_is_older(marker, sender_floor)
+
+def _bootstrap_delivery_state_to_tail():
+  """
+  On first run of async delivery, avoid replaying historical results by tailing
+  currently existing files.
+  """
+  if not _DELIVERY_STATE_WAS_FRESH:
+    return
+  candidates = _list_result_candidates()
+  with _DELIVERY_STATE_LOCK:
+    for _, sender_id, result_name, result_path in candidates:
+      key = _result_state_key(sender_id, result_name)
+      offsets = _DELIVERY_STATE.setdefault("result_offsets", {})
+      if key in offsets:
+        continue
+      try:
+        size = os.path.getsize(result_path)
+      except Exception:
+        size = 0
+      _set_result_state(sender_id, result_name, size, completed=True)
+    _save_delivery_state()
+
+def _list_result_candidates() -> List[Tuple[Tuple[int, int, int, int, int, int, int, str], str, str, str]]:
+  """
+  Returns sorted list of result files:
+  (marker_sort_key, sender_id, file_name, absolute_path)
+  """
+  candidates: List[Tuple[Tuple[int, int, int, int, int, int, int, str], str, str, str]] = []
+  if not os.path.isdir(_TALKER_INBOX_ROOT):
+    return candidates
+
+  for sender_id in sorted(os.listdir(_TALKER_INBOX_ROOT)):
+    sender_dir = os.path.join(_TALKER_INBOX_ROOT, sender_id)
+    if not os.path.isdir(sender_dir):
+      continue
+    try:
+      names = os.listdir(sender_dir)
+    except Exception:
+      continue
+    for file_name in names:
+      marker = _extract_result_marker(file_name)
+      if not marker:
+        continue
+      sort_key = _parse_prompt_sort_key(marker)
+      if sort_key is None:
+        continue
+      full_path = os.path.join(sender_dir, file_name)
+      if not os.path.isfile(full_path):
+        continue
+      candidates.append((sort_key, sender_id, file_name, full_path))
+
+  candidates.sort(key=lambda item: (item[0], item[1], item[2].lower()))
+  return candidates
+
+def _make_delivery_event_key(kind: str, line_offset: int, item_index: int, payload: str) -> str:
+  h = hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()[:16]
+  return f"{kind}:{line_offset}:{item_index}:{h}"
+
+def _state_snapshot(sender_id: str, result_name: str, marker: str) -> Tuple[int, bool, int, Set[str], Optional[int], bool]:
+  with _DELIVERY_STATE_LOCK:
+    offset = _get_result_offset(sender_id, result_name)
+    completed = _get_result_completed(sender_id, result_name)
+    epoch = _get_state_epoch()
+    delivered = _get_result_delivered_event_keys(sender_id, result_name)
+    chat_id = _get_sender_chat(sender_id)
+    blocked = _is_marker_blocked_by_reset(sender_id, marker)
+    return offset, completed, epoch, delivered, chat_id, blocked
+
+def _state_commit_result(sender_id: str, result_name: str, offset: int, completed: bool,
+                         expected_epoch: int) -> bool:
+  with _DELIVERY_STATE_LOCK:
+    if _get_state_epoch() != expected_epoch:
+      return False
+    raw = _get_result_entry(sender_id, result_name)
+    keys = raw.get("delivered_event_keys")
+    if not isinstance(keys, list):
+      keys = []
+    _set_result_state(sender_id, result_name, offset, completed, keys)
+    return _save_delivery_state()
+
+def _state_mark_event_delivered(sender_id: str, result_name: str, event_key: str,
+                                expected_epoch: int) -> bool:
+  with _DELIVERY_STATE_LOCK:
+    if _get_state_epoch() != expected_epoch:
+      return False
+    delivered = _get_result_delivered_event_keys(sender_id, result_name)
+    if event_key in delivered:
+      return True
+    _append_result_delivered_event_key(sender_id, result_name, event_key)
+    return _save_delivery_state()
+
+def _state_epoch_matches(expected_epoch: int) -> bool:
+  with _DELIVERY_STATE_LOCK:
+    return _get_state_epoch() == expected_epoch
+
+async def _ensure_talker_looper_started_async():
+  if _SKIP_TALKER_BOOT:
+    return
+  async with _BOOT_LOCK:
+    if _TALKER_LOOPER_STARTED:
+      return
+    await asyncio.to_thread(_ensure_talker_looper_started)
+
+_load_delivery_state()
+if _SENDER_ID_OVERRIDE:
+  with _DELIVERY_STATE_LOCK:
+    _set_sender_chat(_sanitize_sender_id(_SENDER_ID_OVERRIDE), ALLOWED_CHAT_ID_INT)
+    _save_delivery_state()
 
 def _process_looper_json_line(line: str, started_commands: Dict[str, bool]) -> Tuple[List[str], bool]:
   """
@@ -576,253 +903,318 @@ def _build_file_event_prompt(media_kind: str, saved_path: str, original_name: st
   )
   return "\n".join(lines)
 
-async def _deliver_files(update: Update, paths: List[str], base_dir: Optional[str] = None,
-                         delivered_keys: Optional[Set[str]] = None):
-  """
-  Deliver files to Telegram chat.
-  Paths can be absolute or relative (resolved to base_dir, then CWD).
-  """
-  for raw_path in paths:
-    if os.path.isabs(raw_path):
-      file_path = raw_path
-    else:
-      root = base_dir or os.getcwd()
-      file_path = os.path.join(root, raw_path)
-
-    file_path = os.path.normpath(file_path)
-    key = file_path.lower()
-    if delivered_keys is not None and key in delivered_keys:
-      continue
-    basename = os.path.basename(file_path)
-
-    if not os.path.isfile(file_path):
-      await update.message.reply_text(f"File not found: {raw_path}")
-      continue
-
-    try:
-      file_size = os.path.getsize(file_path)
-    except Exception as e:
-      await update.message.reply_text(f"Failed to check size: {raw_path} ({e})")
-      continue
-
-    if file_size > _MAX_FILE_SIZE:
-      await update.message.reply_text(f"File too large: {raw_path} ({file_size} bytes)")
-      continue
-
-    try:
-      with open(file_path, "rb") as f:
-        await update.message.reply_document(document=f, filename=basename, read_timeout=600, write_timeout=600)
-      await update.message.reply_text(f"Sent: {basename} ({file_size} bytes)")
-      if delivered_keys is not None:
-        delivered_keys.add(key)
-    except Exception as e:
-      await update.message.reply_text(f"Failed to send: {raw_path} ({e})")
-
-async def _emit_stream_messages(update: Update, messages: List[str], delivered_keys: Set[str]) -> bool:
-  emitted = False
-  for message in messages:
-    clean_text, file_paths = _extract_deliver_files(message)
-    if clean_text:
-      await update.message.reply_text(_clip(clean_text))
-      emitted = True
-    if file_paths:
-      await _deliver_files(update, file_paths, base_dir=_TALKER_ROOT, delivered_keys=delivered_keys)
-      emitted = True
-  return emitted
-
-async def _process_result_line(update: Update, line: str, started_commands: Dict[str, bool],
-                               delivered_keys: Set[str]) -> Tuple[bool, bool, bool]:
-  """
-  Process one result file line.
-  Returns (turn_completed, finished_line, emitted_anything).
-  """
-  trim = (line or "").strip()
-  if not trim:
-    return False, False, False
-
-  # Ignore markdown framing lines produced by looper result writer.
-  if trim.startswith("# Codex Result for ") or trim.startswith("Started: ") or trim.startswith("--- Fallback:"):
-    return False, False, False
-
-  if trim.startswith("{") and trim.endswith("}"):
-    messages, turn_completed = _process_looper_json_line(trim, started_commands)
-    emitted = await _emit_stream_messages(update, messages, delivered_keys)
-    if _CONSOLE_MODE == "full":
-      for msg in messages:
-        print(f"[stream] {msg}")
-    return turn_completed, False, emitted
-
-  # Non-JSON informational lines.
-  finished_line = trim.startswith("Finished:")
-  messages: List[str] = []
-  # Keep non-JSON transport silent for Telegram; only use these lines for control flow.
-  if trim.startswith("Command failed with exit code:") and _CONSOLE_MODE == "full":
-    print(f"[stream] [error] {trim}")
-
-  emitted = await _emit_stream_messages(update, messages, delivered_keys)
-  if _CONSOLE_MODE == "full":
-    for msg in messages:
-      print(f"[stream] {msg}")
-  return False, finished_line, emitted
-
-async def _drain_pending_events(update: Update, pending: str, started_commands: Dict[str, bool],
-                                delivered_keys: Set[str]) -> Tuple[str, bool, bool, bool, bool]:
-  """
-  Drain all complete records from `pending`.
-  Supports:
-    - newline-terminated lines
-    - complete JSON objects even without trailing newline
-  Returns (remaining_pending, saw_turn_completed, saw_finished_line, emitted_any, saw_fail_fast).
-  """
-  seen_turn_completed = False
-  seen_finished_line = False
-  emitted_any = False
-  fail_fast = False
-
-  while True:
-    while pending and pending[0] in "\r\n":
-      pending = pending[1:]
-    if not pending:
-      break
-
-    if pending.startswith("{"):
-      try:
-        _, end = _JSON_DECODER.raw_decode(pending)
-      except json.JSONDecodeError:
-        end = -1
-      if end > 0:
-        raw_json = pending[:end]
-        pending = pending[end:]
-        turn_completed, finished_line, emitted = await _process_result_line(
-          update, raw_json, started_commands, delivered_keys
-        )
-        seen_turn_completed = seen_turn_completed or turn_completed
-        seen_finished_line = seen_finished_line or finished_line
-        emitted_any = emitted_any or emitted
-        continue
-
-    nl = pending.find("\n")
-    if nl < 0:
-      break
-
-    raw_line = pending[:nl].rstrip("\r")
-    pending = pending[nl + 1:]
-    turn_completed, finished_line, emitted = await _process_result_line(
-      update, raw_line, started_commands, delivered_keys
-    )
-    seen_turn_completed = seen_turn_completed or turn_completed
-    seen_finished_line = seen_finished_line or finished_line
-    emitted_any = emitted_any or emitted
-    if raw_line.strip().startswith("Command failed with exit code:"):
-      fail_fast = True
-      break
-
-  return pending, seen_turn_completed, seen_finished_line, emitted_any, fail_fast
-
-async def _stream_result_file(update: Update, result_path: str, session_stdout_path: Optional[str]) -> Tuple[bool, bool]:
-  """
-  Poll one result file and stream appended events.
-  Returns (completed, emitted_any_output).
-  """
-  start_time = time.monotonic()
-  last_change_time = start_time
-  seen_file = False
-  seen_turn_completed = False
-  seen_finished_line = False
-  emitted_any = False
-  offset = 0
-  pending = ""
-  started_commands: Dict[str, bool] = {}
-  delivered_keys: Set[str] = set()
-
-  while True:
-    now = time.monotonic()
-    if os.path.isfile(result_path):
-      seen_file = True
-      try:
-        with open(result_path, "r", encoding="utf-8", errors="replace") as f:
-          f.seek(offset)
-          chunk = f.read()
-          offset = f.tell()
-      except Exception:
-        chunk = ""
-
-      if chunk:
-        last_change_time = now
-        _append_raw(session_stdout_path, chunk)
-        pending += chunk
-        pending, turn_completed, finished_line, emitted, fail_fast = await _drain_pending_events(
-          update, pending, started_commands, delivered_keys
-        )
-        seen_turn_completed = seen_turn_completed or turn_completed
-        seen_finished_line = seen_finished_line or finished_line
-        emitted_any = emitted_any or emitted
-        if fail_fast:
-          return False, emitted_any
-
-    if seen_turn_completed:
-      pending, _, _, emitted, _ = await _drain_pending_events(
-        update, pending, started_commands, delivered_keys
-      )
-      emitted_any = emitted_any or emitted
-      if pending.strip():
-        _, _, emitted = await _process_result_line(
-          update, pending.rstrip("\r"), started_commands, delivered_keys
-        )
-        emitted_any = emitted_any or emitted
-      return True, emitted_any
-
-    if not seen_file:
-      if now - start_time > _RESULT_START_TIMEOUT_SEC:
-        await update.message.reply_text(f"Timeout waiting for result file ({int(_RESULT_START_TIMEOUT_SEC)}s).")
-        return False, emitted_any
-      await asyncio.sleep(max(0.05, _RESULT_POLL_IDLE_SEC))
-      continue
-
-    if seen_finished_line and (now - last_change_time) >= _RESULT_FINISHED_IDLE_SEC:
-      pending, _, _, emitted, _ = await _drain_pending_events(
-        update, pending, started_commands, delivered_keys
-      )
-      emitted_any = emitted_any or emitted
-      if pending.strip():
-        _, _, emitted = await _process_result_line(
-          update, pending.rstrip("\r"), started_commands, delivered_keys
-        )
-        emitted_any = emitted_any or emitted
-      return True, emitted_any
-
-    if now - start_time > _RESULT_TOTAL_TIMEOUT_SEC:
-      await update.message.reply_text(f"Timeout waiting for completion ({int(_RESULT_TOTAL_TIMEOUT_SEC)}s).")
-      return False, emitted_any
-
-    await asyncio.sleep(max(0.05, _RESULT_POLL_ACTIVE_SEC))
-
-def _append_run_log(event: str, update: Update, prompt_len: int = 0, cmd: Optional[List[str]] = None,
-                    exit_code: Optional[int] = None, timeout_killed: bool = False,
-                    duration_ms: Optional[int] = None):
-  """Append a line to the session run.log."""
+def _append_run_log(event: str, **fields: Any):
+  """Append one metadata-only line to session run.log."""
   if not _CURRENT_SESSION_DIR:
     return
   try:
     run_log_path = os.path.join(_CURRENT_SESSION_DIR, "run.log")
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    user = update.effective_user
-    user_info = f"@{user.username}" if user and user.username else (user.full_name if user else "unknown")
-    chat_id = update.effective_chat.id if update.effective_chat else 0
-    session_name = os.path.basename(_CURRENT_SESSION_DIR)
-    
-    if event == "START":
-      cmd_str = str(cmd) if cmd else "[]"
-      line = f"{ts} START chat_id={chat_id} user={user_info} prompt_len={prompt_len} session={session_name} cmd={cmd_str}\n"
-    elif event == "END":
-      line = f"{ts} END chat_id={chat_id} exit={exit_code} timeout_killed={timeout_killed} duration_ms={duration_ms}\n"
-    else:
-      line = f"{ts} {event} chat_id={chat_id}\n"
-    
+    base = [ts, event]
+    for key in sorted(fields.keys()):
+      value = fields[key]
+      base.append(f"{key}={value}")
     with open(run_log_path, "a", encoding="utf-8") as f:
-      f.write(line)
+      f.write(" ".join(base) + "\n")
   except Exception:
     pass
+
+def _user_info(update: Update) -> Tuple[int, str]:
+  user = update.effective_user
+  chat_id = update.effective_chat.id if update.effective_chat else 0
+  user_info = f"@{user.username}" if user and user.username else (user.full_name if user else "unknown")
+  return chat_id, user_info
+
+async def _send_text(bot, chat_id: int, text: str):
+  await bot.send_message(chat_id=chat_id, text=_clip(text))
+
+async def _emit_stream_messages(bot, chat_id: int, messages: List[str], *,
+                                sender_id: str, result_name: str, line_offset: int,
+                                delivered_event_keys: Set[str], expected_epoch: int) -> Tuple[bool, bool]:
+  emitted = False
+  for msg_idx, message in enumerate(messages):
+    clean_text, file_paths = _extract_deliver_files(message)
+    if clean_text:
+      event_key = _make_delivery_event_key("msg", line_offset, msg_idx, clean_text)
+      if event_key not in delivered_event_keys:
+        async with _DELIVERY_SEND_LOCK:
+          if not _state_epoch_matches(expected_epoch):
+            return emitted, False
+          await _send_text(bot, chat_id, clean_text)
+          if not _state_mark_event_delivered(sender_id, result_name, event_key, expected_epoch):
+            return emitted, False
+          delivered_event_keys.add(event_key)
+          emitted = True
+
+    for file_idx, raw_path in enumerate(file_paths):
+      event_key = _make_delivery_event_key("file", line_offset, msg_idx * 1000 + file_idx, raw_path)
+      if event_key in delivered_event_keys:
+        continue
+      async with _DELIVERY_SEND_LOCK:
+        if not _state_epoch_matches(expected_epoch):
+          return emitted, False
+
+        if os.path.isabs(raw_path):
+          file_path = raw_path
+        else:
+          file_path = os.path.join(_TALKER_ROOT or os.getcwd(), raw_path)
+        file_path = os.path.normpath(file_path)
+        basename = os.path.basename(file_path)
+
+        if not os.path.isfile(file_path):
+          await _send_text(bot, chat_id, f"File not found: {raw_path}")
+          emitted = True
+          continue
+
+        try:
+          file_size = os.path.getsize(file_path)
+        except Exception as e:
+          await _send_text(bot, chat_id, f"Failed to check size: {raw_path} ({e})")
+          emitted = True
+          continue
+
+        if file_size > _MAX_FILE_SIZE:
+          await _send_text(bot, chat_id, f"File too large: {raw_path} ({file_size} bytes)")
+          emitted = True
+          continue
+
+        try:
+          with open(file_path, "rb") as f:
+            await bot.send_document(chat_id=chat_id, document=f, filename=basename, read_timeout=600, write_timeout=600)
+          await _send_text(bot, chat_id, f"Sent: {basename} ({file_size} bytes)")
+          if not _state_mark_event_delivered(sender_id, result_name, event_key, expected_epoch):
+            return emitted, False
+          delivered_event_keys.add(event_key)
+          emitted = True
+        except Exception as e:
+          await _send_text(bot, chat_id, f"Failed to send: {raw_path} ({e})")
+          emitted = True
+  return emitted, True
+
+async def _process_result_line(bot, chat_id: int, line: str, started_commands: Dict[str, bool],
+                               *, sender_id: str, result_name: str, line_offset: int,
+                               delivered_event_keys: Set[str], expected_epoch: int) -> Tuple[bool, bool, bool, bool]:
+  """
+  Process one result file line.
+  Returns (turn_completed, finished_line, emitted_anything, state_ok).
+  """
+  trim = (line or "").strip()
+  if not trim:
+    return False, False, False, True
+
+  # Ignore markdown framing lines produced by looper result writer.
+  if trim.startswith("# Codex Result for ") or trim.startswith("Started: ") or trim.startswith("--- Fallback:"):
+    return False, False, False, True
+
+  if trim.startswith("{") and trim.endswith("}"):
+    messages, turn_completed = _process_looper_json_line(trim, started_commands)
+    emitted, state_ok = await _emit_stream_messages(
+      bot,
+      chat_id,
+      messages,
+      sender_id=sender_id,
+      result_name=result_name,
+      line_offset=line_offset,
+      delivered_event_keys=delivered_event_keys,
+      expected_epoch=expected_epoch,
+    )
+    if _CONSOLE_MODE == "full":
+      for msg in messages:
+        print(f"[stream] {msg}")
+    return turn_completed, False, emitted, state_ok
+
+  finished_line = trim.startswith("Finished:")
+  if trim.startswith("Command failed with exit code:") and _CONSOLE_MODE == "full":
+    print(f"[stream] [error] {trim}")
+  return False, finished_line, False, True
+
+async def _process_result_file_incremental(bot, sender_id: str, result_name: str, result_marker: str, result_path: str,
+                                           session_stdout_path: Optional[str]) -> Tuple[bool, bool]:
+  """
+  Process new records from one Result.md.
+  Returns (state_changed, emitted_any).
+  """
+  offset, completed, epoch, delivered_event_keys, chat_id, marker_blocked = _state_snapshot(
+    sender_id, result_name, result_marker
+  )
+  state_changed = False
+  emitted_any = False
+
+  try:
+    file_size = os.path.getsize(result_path)
+  except Exception:
+    return False, False
+
+  if file_size < offset:
+    # File was truncated/recreated; start from beginning.
+    offset = 0
+    completed = False
+    state_changed = True
+
+  if file_size <= offset:
+    if state_changed:
+      committed = _state_commit_result(sender_id, result_name, offset, completed, epoch)
+      if not committed:
+        return False, emitted_any
+    return state_changed, False
+
+  if marker_blocked:
+    committed = _state_commit_result(sender_id, result_name, file_size, True, epoch)
+    return committed, False
+
+  if chat_id is None:
+    return False, False
+
+  try:
+    with open(result_path, "rb") as f:
+      f.seek(offset)
+      chunk = f.read()
+  except Exception:
+    return state_changed, False
+
+  if not chunk:
+    return state_changed, False
+
+  _append_raw(session_stdout_path, chunk.decode("utf-8", errors="replace"))
+  started_commands: Dict[str, bool] = {}
+  consumed = 0
+
+  while True:
+    line_start_offset = offset + consumed
+    nl = chunk.find(b"\n", consumed)
+    if nl < 0:
+      break
+    line_bytes = chunk[consumed:nl]
+    consumed = nl + 1
+    line = line_bytes.decode("utf-8", errors="replace").rstrip("\r")
+    turn_completed, finished_line, emitted, state_ok = await _process_result_line(
+      bot,
+      chat_id,
+      line,
+      started_commands,
+      sender_id=sender_id,
+      result_name=result_name,
+      line_offset=line_start_offset,
+      delivered_event_keys=delivered_event_keys,
+      expected_epoch=epoch,
+    )
+    if not state_ok:
+      return False, emitted_any
+    completed = completed or turn_completed or finished_line
+    emitted_any = emitted_any or emitted
+    if line.strip().startswith("Command failed with exit code:"):
+      completed = True
+
+  # Support complete records without trailing newline.
+  if consumed < len(chunk):
+    tail = chunk[consumed:]
+    tail_text = tail.decode("utf-8", errors="replace").strip()
+    tail_complete = False
+    if tail_text.startswith("{") and tail_text.endswith("}"):
+      try:
+        json.loads(tail_text)
+        tail_complete = True
+      except Exception:
+        tail_complete = False
+    elif tail_text.startswith("Finished:") or tail_text.startswith("Command failed with exit code:"):
+      tail_complete = True
+
+    if tail_complete:
+      line_start_offset = offset + consumed
+      turn_completed, finished_line, emitted, state_ok = await _process_result_line(
+        bot,
+        chat_id,
+        tail_text,
+        started_commands,
+        sender_id=sender_id,
+        result_name=result_name,
+        line_offset=line_start_offset,
+        delivered_event_keys=delivered_event_keys,
+        expected_epoch=epoch,
+      )
+      if not state_ok:
+        return False, emitted_any
+      consumed = len(chunk)
+      completed = completed or turn_completed or finished_line
+      emitted_any = emitted_any or emitted
+      if tail_text.startswith("Command failed with exit code:"):
+        completed = True
+
+  if consumed <= 0 and not state_changed:
+    return False, emitted_any
+
+  offset += consumed
+  committed = _state_commit_result(sender_id, result_name, offset, completed, epoch)
+  if not committed:
+    return False, emitted_any
+  _append_run_log(
+    "DELIVER",
+    sender=sender_id,
+    result=result_name,
+    offset=offset,
+    completed=completed,
+    emitted=emitted_any,
+  )
+  return True, emitted_any
+
+async def _delivery_worker_loop(application: Application):
+  global _DELIVERY_STOP_EVENT
+  if _DELIVERY_STOP_EVENT is None:
+    _DELIVERY_STOP_EVENT = asyncio.Event()
+
+  session_stdout_path, session_stderr_path = _get_session_log_paths()
+  if not session_stdout_path or not session_stderr_path:
+    _ensure_temp_dir()
+    session_stdout_path = os.path.join(_TEMP_DIR, "_temp_stdout.log")
+    session_stderr_path = os.path.join(_TEMP_DIR, "_temp_stderr.log")
+
+  print("[DELIVER] worker started")
+  while not _DELIVERY_STOP_EVENT.is_set():
+    changed_any = False
+    emitted_any = False
+    try:
+      for _, sender_id, result_name, result_path in _list_result_candidates():
+        marker = _extract_result_marker(result_name) or ""
+        changed, emitted = await _process_result_file_incremental(
+          application.bot,
+          sender_id,
+          result_name,
+          marker,
+          result_path,
+          session_stdout_path,
+        )
+        changed_any = changed_any or changed
+        emitted_any = emitted_any or emitted
+    except Exception as e:
+      _append_raw(session_stderr_path, f"[ERROR] delivery worker loop: {e}\n")
+      _append_run_log("DELIVER_ERROR", error=repr(e))
+
+    wait_for = _RESULT_POLL_ACTIVE_SEC if (changed_any or emitted_any) else _RESULT_POLL_IDLE_SEC
+    try:
+      await asyncio.wait_for(_DELIVERY_STOP_EVENT.wait(), timeout=max(0.05, wait_for))
+    except asyncio.TimeoutError:
+      continue
+  print("[DELIVER] worker stopped")
+
+async def _start_delivery_worker(application: Application):
+  global _DELIVERY_TASK, _DELIVERY_STOP_EVENT
+  if _DELIVERY_TASK and not _DELIVERY_TASK.done():
+    return
+  _DELIVERY_STOP_EVENT = asyncio.Event()
+  _DELIVERY_TASK = application.create_task(_delivery_worker_loop(application))
+
+async def _stop_delivery_worker():
+  global _DELIVERY_TASK, _DELIVERY_STOP_EVENT
+  if _DELIVERY_STOP_EVENT is not None:
+    _DELIVERY_STOP_EVENT.set()
+  if _DELIVERY_TASK is not None:
+    _DELIVERY_TASK.cancel()
+    try:
+      await _DELIVERY_TASK
+    except asyncio.CancelledError:
+      pass
+  _DELIVERY_TASK = None
+  _DELIVERY_STOP_EVENT = None
 
 def _validate_reset_scope():
   """
@@ -921,11 +1313,24 @@ def _reset_sender_dir(sender_id: str) -> int:
   _validate_reset_scope()
   sender_dir = os.path.join(_TALKER_INBOX_ROOT, sender_id)
   os.makedirs(sender_dir, exist_ok=True)
-  return _clear_sender_artifacts(sender_dir)
+  with _DELIVERY_STATE_LOCK:
+    _bump_state_epoch()
+    _set_sender_min_marker(sender_id, _make_prompt_marker())
+    _forget_sender_delivery_state(sender_id)
+    if not _save_delivery_state():
+      raise RuntimeError("Failed to persist delivery state during reset_session")
+  removed = _clear_sender_artifacts(sender_dir)
+  return removed
 
 def _reset_all_sender_dirs() -> Tuple[int, int]:
   _validate_reset_scope()
   _ensure_talker_paths()
+  with _DELIVERY_STATE_LOCK:
+    _bump_state_epoch()
+    _forget_all_delivery_state()
+    _set_global_min_marker(_make_prompt_marker())
+    if not _save_delivery_state():
+      raise RuntimeError("Failed to persist delivery state during reset_all")
   sender_count = 0
   removed_files = 0
   for name in os.listdir(_TALKER_INBOX_ROOT):
@@ -936,44 +1341,56 @@ def _reset_all_sender_dirs() -> Tuple[int, int]:
     removed_files += _clear_sender_artifacts(path)
   return sender_count, removed_files
 
-async def _run_agent(update: Update, prompt: str, wait_for_lock: bool = False):
-  global _CURRENT_AGENT, _CURRENT_SESSION_DIR
+async def _submit_prompt(update: Update, prompt: str, source: str) -> Optional[str]:
+  global _CURRENT_SESSION_DIR
 
   prompt = (prompt or "").strip()
   if not prompt:
     await update.message.reply_text("Empty prompt.")
-    return
-
-  acquired = False
-  if wait_for_lock:
-    await _RUN_LOCK.acquire()
-    acquired = True
-  else:
-    # Concurrency protection: non-blocking acquire.
-    try:
-      await asyncio.wait_for(_RUN_LOCK.acquire(), timeout=0.001)
-      acquired = True
-    except asyncio.TimeoutError:
-      await update.message.reply_text("Busy. Try again in a moment.")
-      return
+    return None
 
   if _CURRENT_SESSION_DIR is None:
     _create_new_session_dir()
 
-  run_start_time = datetime.now()
-  completed = False
-  timeout_killed = False
-  session_stderr_path: Optional[str] = None
+  chat_id, user_info = _user_info(update)
+  sender_id = _resolve_sender_id(update)
+  started_at = time.monotonic()
+  marker = ""
+  status = "ok"
+  error_text = ""
 
-  stop_typing = asyncio.Event()
-  typing_task = asyncio.create_task(_typing_loop(update.effective_chat, stop_typing))
+  _append_run_log(
+    "SUBMIT_START",
+    chat_id=chat_id,
+    user=user_info,
+    sender=sender_id,
+    source=source,
+    prompt_len=len(prompt),
+    session=os.path.basename(_CURRENT_SESSION_DIR or "none"),
+  )
 
   try:
-    try:
-      await asyncio.to_thread(_ensure_talker_looper_started)
-    except Exception as e:
-      await update.message.reply_text(f"Failed to start Talker looper: {e}")
-      return
+    await _ensure_talker_looper_started_async()
+    async with _SUBMIT_LOCK:
+      sender_dir = os.path.join(_TALKER_INBOX_ROOT, sender_id)
+      marker, prompt_path, result_path = _allocate_prompt_paths(sender_dir)
+      result_name = os.path.basename(result_path)
+      with _DELIVERY_STATE_LOCK:
+        _set_sender_chat(sender_id, chat_id)
+        _set_result_state(sender_id, result_name, 0, completed=False)
+        if not _save_delivery_state():
+          raise RuntimeError("Failed to persist delivery state before submit")
+
+      try:
+        _write_prompt_atomic(prompt_path, prompt)
+      except Exception:
+        # Prompt creation failed after state write: remove orphan state entry.
+        with _DELIVERY_STATE_LOCK:
+          offsets = _DELIVERY_STATE.get("result_offsets", {})
+          if isinstance(offsets, dict):
+            offsets.pop(_result_state_key(sender_id, result_name), None)
+          _save_delivery_state()
+        raise
 
     session_stdout_path, session_stderr_path = _get_session_log_paths()
     if not session_stdout_path or not session_stderr_path:
@@ -981,44 +1398,32 @@ async def _run_agent(update: Update, prompt: str, wait_for_lock: bool = False):
       session_stdout_path = os.path.join(_TEMP_DIR, "_temp_stdout.log")
       session_stderr_path = os.path.join(_TEMP_DIR, "_temp_stderr.log")
 
-    sender_id = _resolve_sender_id(update)
-    sender_dir = os.path.join(_TALKER_INBOX_ROOT, sender_id)
-    marker, prompt_path, result_path = _allocate_prompt_paths(sender_dir)
-    _write_prompt_atomic(prompt_path, prompt)
-
-    run_cmd = ["looper_publish", f"sender={sender_id}", prompt_path]
-    print(
-      f"[RUN] agent={_CURRENT_AGENT} mode={_CONSOLE_MODE} "
-      f"session={os.path.basename(_CURRENT_SESSION_DIR or 'none')} marker={marker} sender={sender_id}"
-    )
-    _append_run_log("START", update, len(prompt), run_cmd)
-
-    _append_raw(session_stdout_path, f"\n=== Prompt marker: {marker} sender={sender_id} ===\n")
+    _append_raw(session_stdout_path, f"\n=== SUBMIT marker={marker} sender={sender_id} source={source} ===\n")
     _append_raw(session_stdout_path, f"Prompt file: {prompt_path}\n")
     _append_raw(session_stdout_path, f"Result file: {result_path}\n")
-
-    completed, emitted_any = await _stream_result_file(update, result_path, session_stdout_path)
-    if not emitted_any and completed:
-      await update.message.reply_text("Done.")
-    if not completed:
-      timeout_killed = True
-      _append_raw(session_stderr_path, f"[WARN] Stream did not complete for marker={marker}\n")
+    await update.message.reply_text(f"Accepted. marker={marker}")
+    return marker
   except Exception as e:
-    _append_raw(session_stderr_path, f"[ERROR] _run_agent failed: {e}\n")
-    await update.message.reply_text(f"Run failed: {e}")
+    status = "error"
+    error_text = str(e)
+    try:
+      await update.message.reply_text(f"Submit failed: {e}")
+    except Exception:
+      pass
+    return None
   finally:
-    await _stop_typing_task(stop_typing, typing_task)
-    duration_ms = int((datetime.now() - run_start_time).total_seconds() * 1000)
-    exit_code = 0 if completed else 1
+    duration_ms = int((time.monotonic() - started_at) * 1000)
     _append_run_log(
-      "END",
-      update,
-      exit_code=exit_code,
-      timeout_killed=timeout_killed,
+      "SUBMIT_END",
+      chat_id=chat_id,
+      user=user_info,
+      sender=sender_id,
+      source=source,
+      marker=marker or "-",
+      status=status,
       duration_ms=duration_ms,
+      error=repr(error_text) if error_text else "-",
     )
-    if acquired:
-      _RUN_LOCK.release()
 
 async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _echo_console(update)
@@ -1085,7 +1490,7 @@ async def on_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
       caption=caption,
       sender_id=sender_id,
     )
-    await _run_agent(update, auto_prompt, wait_for_lock=True)
+    await _submit_prompt(update, auto_prompt, source=f"file:{media_kind}")
   except Exception as e:
     await update.message.reply_text(f"Failed to save attachment: {e}")
   finally:
@@ -1111,6 +1516,9 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return
 
   sender_id = _resolve_sender_id(update)
+  worker_alive = bool(_DELIVERY_TASK and not _DELIVERY_TASK.done())
+  with _DELIVERY_STATE_LOCK:
+    delivery_epoch = _get_state_epoch()
   await update.message.reply_text(
     f"current_agent = {_CURRENT_AGENT}\n"
     f"looper_root = {_LOOPER_ROOT}\n"
@@ -1119,6 +1527,8 @@ async def cmd_agent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     f"sender_id = {sender_id}\n"
     f"sender_override = {_SENDER_ID_OVERRIDE or '(none)'}\n"
     f"looper_started = {_TALKER_LOOPER_STARTED}\n"
+    f"delivery_worker = {worker_alive}\n"
+    f"delivery_epoch = {delivery_epoch}\n"
     f"show_reasoning = {_SHOW_REASONING}\n"
     f"show_commands = {_SHOW_COMMANDS}"
   )
@@ -1148,13 +1558,12 @@ async def cmd_reset_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
   if not _is_allowed(update):
     await update.message.reply_text("Access denied.")
     return
-  if _RUN_LOCK.locked():
-    await update.message.reply_text("Busy. Try again in a moment.")
-    return
 
   sender_id = _resolve_sender_id(update)
   try:
-    removed = _reset_sender_dir(sender_id)
+    async with _DELIVERY_SEND_LOCK:
+      async with _SUBMIT_LOCK:
+        removed = _reset_sender_dir(sender_id)
     await update.message.reply_text(
       f"OK. reset_session done for sender: {sender_id}. Removed files: {removed}"
     )
@@ -1166,12 +1575,11 @@ async def cmd_reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
   if not _is_allowed(update):
     await update.message.reply_text("Access denied.")
     return
-  if _RUN_LOCK.locked():
-    await update.message.reply_text("Busy. Try again in a moment.")
-    return
 
   try:
-    sender_count, removed_files = _reset_all_sender_dirs()
+    async with _DELIVERY_SEND_LOCK:
+      async with _SUBMIT_LOCK:
+        sender_count, removed_files = _reset_all_sender_dirs()
     await update.message.reply_text(
       f"OK. reset_all done. Sender dirs scanned: {sender_count}. Removed files: {removed_files}"
     )
@@ -1240,7 +1648,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /help - show this help
 
 Notes:
-- Only one run at a time; if busy, you'll get "Busy. Try again in a moment."
+- Requests are submitted immediately; results are delivered asynchronously by background worker.
 - Plain text (without /) is also forwarded to current agent.
 - Attachments are saved to Talker inbox sender folder (.../Inbox/<sender>/Files)."""
   
@@ -1330,7 +1738,7 @@ async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Usage: /run <text>")
     return
 
-  await _run_agent(update, prompt)
+  await _submit_prompt(update, prompt, source="command:/run")
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
   # Any non-command text is treated as a prompt for the current agent.
@@ -1342,7 +1750,17 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return
 
   text = update.message.text if update.message else ""
-  await _run_agent(update, text)
+  await _submit_prompt(update, text, source="text")
+
+async def _app_post_init(application: Application):
+  _ensure_talker_paths()
+  _bootstrap_delivery_state_to_tail()
+  _append_run_log("DELIVERY_WORKER_START")
+  await _start_delivery_worker(application)
+
+async def _app_post_shutdown(application: Application):
+  _append_run_log("DELIVERY_WORKER_STOP")
+  await _stop_delivery_worker()
 
 def main():
   print("[BOOT] Starting Telegram gateway (polling)...")
@@ -1366,7 +1784,7 @@ def main():
       # Keep gateway alive. /run will retry and return actionable error to chat.
       print(f"[WARN] Talker looper start failed at boot: {e}")
 
-  app = Application.builder().token(TOKEN).build()
+  app = Application.builder().token(TOKEN).post_init(_app_post_init).post_shutdown(_app_post_shutdown).build()
 
   # Commands
   app.add_handler(CommandHandler("id", cmd_id))

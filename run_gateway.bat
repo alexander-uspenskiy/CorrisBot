@@ -27,10 +27,19 @@ if not defined WT_EXE if exist "%LOCALAPPDATA%\Microsoft\WindowsApps\Microsoft.W
 if not defined WT_EXE (
   for /f "delims=" %%I in ('where wt 2^>nul') do (
     set "WT_EXE=%%I"
-    goto :run_wt
+    goto :assemble
   )
 )
 if not defined WT_EXE goto :run_fallback
+
+:assemble
+echo [BOOT] Assembling Talker AGENTS.md ...
+py "%LOOPER_ROOT%\assemble_agents.py" "%TALKER_ROOT%\AGENTS_TEMPLATE.md" "%TALKER_ROOT%\AGENTS.md"
+if errorlevel 1 (
+  echo [ERROR] Failed to assemble Talker AGENTS.md
+  pause
+  exit /b 1
+)
 
 :run_wt
 "%WT_EXE%" -w "%WT_WINDOW%" new-tab --title "Telegram Gateway" --suppressApplicationTitle cmd /k cd /d "%WORKDIR%" ^&^& set "GATEWAY_SKIP_TALKER_BOOT=1" ^&^& py tg_codex_gateway.py "%TALKER_ROOT%" ; split-pane -V --title "Talker [Talker/Agents-01]" --suppressApplicationTitle cmd /k ""%LOOPER_ROOT%\CodexLoop.bat" "%TALKER_ROOT%" ".""
