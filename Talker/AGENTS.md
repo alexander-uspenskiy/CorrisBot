@@ -8,6 +8,8 @@ Work in the current agent directory and keep its root clean.
 - If a prompt asks to pass work to another looper and report back here, treat it as asynchronous by default.
   Submit the handoff and finish the current turn without blocking wait, unless synchronous mode was explicitly requested.
 - Use synchronous waiting/relay only when the user or upstream agent explicitly asks to wait for the result and return it in the same turn/message.
+- Never invent synchronous mode on your own. Do not add directives like `Mode: synchronous required` unless such mode is explicitly requested in the current prompt chain.
+- Do not block a turn by polling another looper state (`*_Result.md`, repeated tail/read loops, sleep+recheck cycles, "still waiting" loops).
 - Keep the final answer concise.
 
 Use this structure:
@@ -27,6 +29,8 @@ Create a normal prompt file in the target sender inbox (`<LooperFolder>/Prompts/
 Если каталога нет - создать его.
 - Этот механизм является основным и обязательным каналом межлуперной коммуникации.
 - Нельзя вносить прямые изменения в рабочие каталоги другого лупера (`Tools`, `Temp`, `Output`, `Plans` и т.п.), кроме записи prompt-файла в его `Prompts/Inbox/<SenderID>/`.
+- Ответ между луперами также передается только новым `Prompt_*.md` в inbox отправителя запроса (по согласованному `Reply-To`).
+- `*_Result.md` другого лупера не является межлуперным транспортом. Это внутренний run-log для наблюдения/диагностики.
 
 # ROLE TALKER
 # TALKER ROLE
@@ -86,6 +90,10 @@ Rules for agent communication with users through Gateway (file exchange and resp
 
 # SKILL AGENT-RUNNER
 
+
+> **Для оркестраторов:** Создание Executor — это ОБЯЗАТЕЛЬНЫЙ первый шаг после получения задачи.
+> Оркестратор не имеет права выполнять код самостоятельно. Все задачи реализации делегируются через этот скил.
+> Если задача допускает параллельное выполнение нескольких подзадач — создавай нескольких исполнителей и запускай их одновременно.
 
 # Создание структуры файлов агента лупера
 - Выбираем название агенту. Должно быть простым, совместимым с файловой системой.
@@ -164,6 +172,17 @@ What it does:
     - `- Scope: use this Reply-To for all further reports/questions in this project session until Talker sends updated Reply-To`
   - Этот блок обязателен для первого сообщения в проектной сессии и при явной смене маршрута.
   - Если маршрут не менялся, не дублируй `Reply-To` в каждом следующем prompt.
+- Правило relay для входящих внутренних сообщений (например sender вида `Orc_*`, `Executor_*`, не gateway sender):
+  - это безусловный канал "внутренний агент -> пользователь через Talker";
+  - не завершайся только "ответом во внутренний sender inbox";
+  - обязательно создай новый prompt в `Prompts/Inbox/<UserSenderID>/Prompt_...md`, где `UserSenderID` берется из активной проектной сессии;
+  - в тексте для пользователя явно указывай источник сообщения (например: `[Orc_<ProjectTag>]: ...`);
+  - после создания prompt в user inbox завершай текущий turn без ожидания.
+- Talker обязан сам вести маршрутизацию проектной сессии:
+  - при первой передаче задачи пользователя в проект запомни пару: `<ProjectTag> -> <UserSenderID>`;
+  - для всех последующих входящих внутренних сообщений этого проекта используй сохраненный `UserSenderID` для relay;
+  - если по тому же `ProjectTag` приходит новая пользовательская активность от другого `UserSenderID`, не перезаписывай маршрут молча: запроси явное подтверждение у пользователя/оператора перед сменой привязки;
+  - если для проекта маршрут неизвестен/неоднозначен, нельзя молча "поглощать" сообщение: зафиксируй проблему и запроси уточнение у пользователя.
 - Если пользователь просит "передай оркестратору ... и отчитайся сюда", по умолчанию это асинхронный сценарий:
   - передай задачу оркестратору;
   - завершай текущий turn без блокирующего ожидания;

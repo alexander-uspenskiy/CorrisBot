@@ -32,6 +32,22 @@
   - Не заменяй его на "логически похожие" пути (например, `<PROJECT_ROOT_PATH>\Talker\...`), если Talker явно не прислал обновленный `Reply-To`.
   - Менять маршрут можно только по явному новому `Reply-To` от Talker.
 
+## Delegation Transport Contract (Executor <-> Orchestrator)
+- Межлуперный обмен с Executor делай только через `Prompt_*.md` в inbox; не используй `*_Result.md` как канал "ответа исполнителя".
+- Каждый prompt Executor-у должен содержать `Reply-To` блок с маршрутом ответа в Orchestrator inbox:
+  - `Reply-To:`
+  - `- InboxPath: <...Orchestrator\\Prompts\\Inbox\\<ExecutorSenderFolder>>`
+  - `- SenderID: <SenderID оркестратора для этого Executor>`
+- По завершению делегирования (или при вопросе) ожидаемый ответ Executor-а должен приходить новым prompt-файлом в указанный `Reply-To`.
+- Нельзя строить протокол на поллинге `Executor/.../_Result.md` и "дожидании стабилизации файла".
+
+## Async By Default (Orchestrator)
+- Если ты делегировал задачу Executor-у, а sync-режим явно не запрошен upstream-пользователем/Talker:
+  - заверши текущий turn после отправки постановки и краткого статуса;
+  - не пиши `Mode: synchronous required`;
+  - не запускай циклы ожидания "жду отчет исполнителя", "poll every N sec", "дожидаюсь стабилизации".
+- Синхронный режим разрешен только при явном требовании в текущем prompt chain.
+
 ## Working Protocol (Mandatory)
 
 ### Phase 0: Orientation Before Detailed Plan

@@ -8,6 +8,8 @@ Work in the current agent directory and keep its root clean.
 - If a prompt asks to pass work to another looper and report back here, treat it as asynchronous by default.
   Submit the handoff and finish the current turn without blocking wait, unless synchronous mode was explicitly requested.
 - Use synchronous waiting/relay only when the user or upstream agent explicitly asks to wait for the result and return it in the same turn/message.
+- Never invent synchronous mode on your own. Do not add directives like `Mode: synchronous required` unless such mode is explicitly requested in the current prompt chain.
+- Do not block a turn by polling another looper state (`*_Result.md`, repeated tail/read loops, sleep+recheck cycles, "still waiting" loops).
 - Keep the final answer concise.
 
 Use this structure:
@@ -27,3 +29,5 @@ Create a normal prompt file in the target sender inbox (`<LooperFolder>/Prompts/
 Если каталога нет - создать его.
 - Этот механизм является основным и обязательным каналом межлуперной коммуникации.
 - Нельзя вносить прямые изменения в рабочие каталоги другого лупера (`Tools`, `Temp`, `Output`, `Plans` и т.п.), кроме записи prompt-файла в его `Prompts/Inbox/<SenderID>/`.
+- Ответ между луперами также передается только новым `Prompt_*.md` в inbox отправителя запроса (по согласованному `Reply-To`).
+- `*_Result.md` другого лупера не является межлуперным транспортом. Это внутренний run-log для наблюдения/диагностики.
