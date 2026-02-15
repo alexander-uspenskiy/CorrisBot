@@ -1201,7 +1201,9 @@ async def _start_delivery_worker(application: Application):
   if _DELIVERY_TASK and not _DELIVERY_TASK.done():
     return
   _DELIVERY_STOP_EVENT = asyncio.Event()
-  _DELIVERY_TASK = application.create_task(_delivery_worker_loop(application))
+  # Use raw asyncio task management: this worker is started during post_init and
+  # stopped explicitly in post_shutdown.
+  _DELIVERY_TASK = asyncio.create_task(_delivery_worker_loop(application))
 
 async def _stop_delivery_worker():
   global _DELIVERY_TASK, _DELIVERY_STOP_EVENT
