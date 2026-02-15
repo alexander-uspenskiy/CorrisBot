@@ -2,6 +2,6 @@
   "window_name_template": "CorrisBot",
   "tab_name_prefix": "Agents",
   "max_panes_per_tab": 4,
-  "split_sequence": ["-H", "-V", "-H"],
+  "tab_index_offset": 1,
   "state_subpath": "Temp\\wt_layout_state.json"
 }

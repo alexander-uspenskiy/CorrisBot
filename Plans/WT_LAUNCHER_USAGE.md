@@ -35,5 +35,8 @@ Current keys:
 - `window_name_template` (supports `{project}`)
 - `tab_name_prefix`
 - `max_panes_per_tab`
-- `split_sequence` (`-H`/`-V`)
+- `tab_index_offset` (default `1`: keeps project tabs after Gateway/Talker tab in shared window)
 - `state_subpath`
+
+Pane layout per tab is fixed to 2x2 when full (equal 25/25/25/25).
+If saved state was created with older layout parameters, launcher resets stale state automatically.

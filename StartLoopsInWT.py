@@ -16,7 +16,7 @@ DEFAULT_LAYOUT: dict[str, Any] = {
     "window_name_template": "CorrisBot",
     "tab_name_prefix": "Agents",
     "max_panes_per_tab": 4,
-    "split_sequence": ["-H", "-V", "-H"],
+    "tab_index_offset": 1,
     "state_subpath": "Temp\\wt_layout_state.json",
 }
 
@@ -188,18 +188,12 @@ def can_invoke_wt_alias() -> bool:
     return probe.returncode == 0
 
 
-def parse_split_sequence(raw: Any) -> list[str]:
-    values: list[str] = []
-    if isinstance(raw, list):
-        for item in raw:
-            text = str(item).strip().upper()
-            if text in {"-H", "H", "HORIZONTAL"}:
-                values.append("-H")
-            elif text in {"-V", "V", "VERTICAL"}:
-                values.append("-V")
-    if not values:
-        return ["-H", "-V", "-H"]
-    return values
+def normalize_tab_index_offset(raw: Any) -> int:
+    try:
+        value = int(raw)
+    except Exception:
+        return 1
+    return max(0, value)
 
 
 def format_args_for_display(args: list[str]) -> str:
@@ -226,6 +220,41 @@ def escape_for_cmd(text: str) -> str:
         .replace("<", "^<")
         .replace(">", "^>")
     )
+
+
+def get_split_operation_args(pane_index: int, pane_title: str, cmd_line: str) -> list[str]:
+    common = [
+        "--title",
+        pane_title,
+        "--suppressApplicationTitle",
+        "cmd",
+        "/k",
+        cmd_line,
+    ]
+    if pane_index == 1:
+        return ["split-pane", "-V", *common]
+    if pane_index == 2:
+        return ["focus-pane", "-t", "0", ";", "split-pane", "-H", *common]
+    if pane_index == 3:
+        return ["focus-pane", "-t", "1", ";", "split-pane", "-H", *common]
+    return ["split-pane", "-H", *common]
+
+
+def prepend_window_and_tab_focus(
+    window_name: str, split_ops: list[str], tab_index: int | None
+) -> list[str]:
+    args = ["-w", window_name]
+    if tab_index is not None:
+        args.extend(["focus-tab", "-t", str(tab_index), ";"])
+    args.extend(split_ops)
+    return args
+
+
+def parse_int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -392,7 +421,7 @@ def main() -> int:
     except Exception:
         max_panes = int(DEFAULT_LAYOUT["max_panes_per_tab"])
     max_panes = max(1, max_panes)
-    split_sequence = parse_split_sequence(layout.get("split_sequence"))
+    tab_index_offset = normalize_tab_index_offset(layout.get("tab_index_offset", 1))
 
     state_subpath = str(layout.get("state_subpath", DEFAULT_LAYOUT["state_subpath"])).strip()
     if not state_subpath:
@@ -415,7 +444,13 @@ def main() -> int:
         return 0
 
     state = load_json_file(state_path)
-    slots = normalize_state_slots(state.get("agent_slots"))
+    state_tab_index_offset = parse_int_or_none(state.get("tab_index_offset"))
+    reset_due_to_layout = state and state_tab_index_offset != tab_index_offset
+    if reset_due_to_layout:
+        print("[info] Resetting stale WT layout state (tab_index_offset changed).")
+        slots: dict[str, dict[str, int]] = {}
+    else:
+        slots = normalize_state_slots(state.get("agent_slots"))
     slots = prune_state_slots(slots, project_root, process_lines)
 
     tab_counts = build_tab_counts(slots)
@@ -430,6 +465,7 @@ def main() -> int:
     pane_title = f"{agent_label} [{project_tag}/{tab_label}]"
     loop_cmd = get_loop_invocation(loop_bat_path, project_root, agent_path)
     cmd_line = f"title {escape_for_cmd(pane_title)} && {loop_cmd}"
+    absolute_tab_index = tab_index + tab_index_offset
 
     if pane_index == 0:
         wt_args = [
@@ -444,37 +480,43 @@ def main() -> int:
             cmd_line,
         ]
     else:
-        orientation = split_sequence[(pane_index - 1) % len(split_sequence)]
-        wt_args = [
-            "-w",
-            window_name,
-            "focus-tab",
-            "-t",
-            str(tab_index),
-            ";",
-            "split-pane",
-            orientation,
-            "--title",
-            pane_title,
-            "--suppressApplicationTitle",
-            "cmd",
-            "/k",
-            cmd_line,
-        ]
+        split_ops = get_split_operation_args(pane_index, pane_title, cmd_line)
+        wt_args_primary = prepend_window_and_tab_focus(window_name, split_ops, absolute_tab_index)
+        wt_args_active = prepend_window_and_tab_focus(window_name, split_ops, None)
+        wt_candidates_by_priority: list[tuple[str, list[str]]] = [("focused+offset", wt_args_primary)]
+        wt_candidates_by_priority.append(("active-tab", wt_args_active))
+        wt_args = wt_args_primary
 
     print(f"Project root: {project_root}")
     print(f"Agent path:   {agent_path}")
     print(f"Window name:  {window_name}")
-    print(f"Target:       tab={tab_index + 1}, pane={pane_index + 1}")
+    print(f"Target:       tab={tab_index + 1} (absolute {absolute_tab_index + 1}), pane={pane_index + 1}")
     print(f"State file:   {state_path}")
 
     if args.dry_run:
         print("[dry-run] wt " + format_args_for_display(wt_args))
+        if pane_index > 0:
+            for label, candidate in wt_candidates_by_priority[1:]:
+                print(f"[dry-run] fallback({label}) wt " + format_args_for_display(candidate))
         return 0
 
-    ok, err = run_wt_command(wt_args, wt_candidates, alias_available)
-    if not ok:
-        raise RuntimeError(f"Failed to start Windows Terminal: {err}")
+    if pane_index == 0:
+        ok, err = run_wt_command(wt_args, wt_candidates, alias_available)
+        if not ok:
+            raise RuntimeError(f"Failed to start Windows Terminal: {err}")
+    else:
+        launch_errors: list[str] = []
+        launched = False
+        for label, candidate in wt_candidates_by_priority:
+            ok, err = run_wt_command(candidate, wt_candidates, alias_available)
+            if ok:
+                launched = True
+                if label != "focused+offset":
+                    print(f"[warning] Used fallback launch mode: {label}")
+                break
+            launch_errors.append(f"{label}: {err}")
+        if not launched:
+            raise RuntimeError("Failed to start Windows Terminal: " + " | ".join(launch_errors))
 
     slots[agent_path] = {"tab_index": tab_index, "pane_index": pane_index}
     write_json_file(
@@ -484,6 +526,7 @@ def main() -> int:
             "window_name": window_name,
             "max_panes_per_tab": max_panes,
             "tab_name_prefix": tab_name_prefix,
+            "tab_index_offset": tab_index_offset,
             "agent_slots": slots,
             "updated_at": now_iso(),
         },

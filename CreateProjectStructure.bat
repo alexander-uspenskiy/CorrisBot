@@ -33,7 +33,7 @@ for %%D in ("" "Executors" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestr
   )
 )
 
-for %%F in (AGENTS.md Info.md ROLE_ORCHESTRATOR.md) do (
+for %%F in (Info.md ROLE_ORCHESTRATOR.md) do (
   if not exist "%TEMPLATE_ROOT%\Orchestrator\%%F" (
     echo Missing required source file: "%TEMPLATE_ROOT%\Orchestrator\%%F"
     exit /b 6
@@ -43,6 +43,14 @@ for %%F in (AGENTS.md Info.md ROLE_ORCHESTRATOR.md) do (
       echo Failed to copy file: "%TEMPLATE_ROOT%\Orchestrator\%%F"
       exit /b 7
     )
+  )
+)
+
+if not exist "%DEST_ROOT%\Orchestrator\AGENTS.md" (
+  py "%~dp0assemble_agents.py" "%TEMPLATE_ROOT%\Orchestrator\AGENTS_TEMPLATE.md" "%DEST_ROOT%\Orchestrator\AGENTS.md"
+  if errorlevel 1 (
+    echo Failed to assemble Orchestrator AGENTS.md
+    exit /b 7
   )
 )
 

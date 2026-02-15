@@ -342,8 +342,7 @@ class LoopRunner:
             "- For app launch/close tasks, execute action immediately, then do a quick verification.\n"
             "- If quick verification is negative or uncertain, wait at least 5 seconds and verify again before concluding failure.\n"
             "- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.\n"
-            "- Do not use internet/network resources (no web access, no API calls, no downloads).\n"
-            "- Keep the final answer concise.\n\n"
+            "- Do not use internet/network resources (no web access, no API calls, no downloads).\n\n"
             f"Sender ID: {sender_id}\n\n"
             "User prompt:\n"
         )

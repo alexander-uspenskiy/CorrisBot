@@ -59,7 +59,7 @@ if not exist "%DEST_ROOT%\Prompts\Inbox\%ORCHESTRATOR_NAME%\" (
   )
 )
 
-for %%F in (AGENTS.md Info.md ROLE_EXECUTOR.md) do (
+for %%F in (Info.md ROLE_EXECUTOR.md) do (
   if not exist "%SOURCE_ROOT%\%%F" (
     echo Missing required source file: "%SOURCE_ROOT%\%%F"
     exit /b 7
@@ -69,6 +69,14 @@ for %%F in (AGENTS.md Info.md ROLE_EXECUTOR.md) do (
       echo Failed to copy file: %%F
       exit /b 8
     )
+  )
+)
+
+if not exist "%DEST_ROOT%\AGENTS.md" (
+  py "%~dp0assemble_agents.py" "%SOURCE_ROOT%\AGENTS_TEMPLATE.md" "%DEST_ROOT%\AGENTS.md"
+  if errorlevel 1 (
+    echo Failed to assemble Executor AGENTS.md
+    exit /b 8
   )
 )
 

@@ -5,8 +5,10 @@ Work in the current agent directory and keep its root clean.
 ## Critical Rules (Mandatory)
 
 - Follow role boundaries from loaded instructions strictly; do not perform actions explicitly prohibited by your role.
-- If a prompt asks to pass work to another looper and report back here, treat it as synchronous by default.
-  Finish the turn only after you relay the obtained result, unless async mode was explicitly requested.
+- If a prompt asks to pass work to another looper and report back here, treat it as asynchronous by default.
+  Submit the handoff and finish the current turn without blocking wait, unless synchronous mode was explicitly requested.
+- Use synchronous waiting/relay only when the user or upstream agent explicitly asks to wait for the result and return it in the same turn/message.
+- Keep the final answer concise.
 
 Use this structure:
 - `Temp` for temporary and intermediate files.
