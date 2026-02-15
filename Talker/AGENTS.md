@@ -1,8 +1,3 @@
-## CRITICAL
-- Before any action, read this file fully.
-- Every `Read:` link in this file is mandatory.
-- Follow the full nested `Read:` chain recursively before processing the prompt.
-
 # Looper Base Rules
 
 Work in the current agent directory and keep its root clean.
@@ -10,8 +5,9 @@ Work in the current agent directory and keep its root clean.
 ## Critical Rules (Mandatory)
 
 - Follow role boundaries from loaded instructions strictly; do not perform actions explicitly prohibited by your role.
-- If a prompt asks to pass work to another looper and report back here, treat it as synchronous by default.
-  Finish the turn only after you relay the obtained result, unless async mode was explicitly requested.
+- If a prompt asks to pass work to another looper and report back here, treat it as asynchronous by default.
+  Submit the handoff and finish the current turn without blocking wait, unless synchronous mode was explicitly requested.
+- Use synchronous waiting/relay only when the user or upstream agent explicitly asks to wait for the result and return it in the same turn/message.
 - Keep the final answer concise.
 
 Use this structure:
@@ -159,8 +155,21 @@ What it does:
 - `ProjectTag` определяй детерминированно: это имя конечного каталога из `<PROJECT_ROOT_PATH>`.
   - пример: для `C:\Temp\.TestProject` использовать `ProjectTag=.TestProject`
 - Для выбранного проекта используй один и тот же `ProjectTag` и, соответственно, один и тот же `SenderID` во всех дальнейших сообщениях.
-- Если пользователь просит "передай оркестратору ... и отчитайся сюда", по умолчанию это синхронный сценарий:
+- В ПЕРВОМ prompt к оркестратору по выбранному проекту обязательно явно передавай маршрут обратной связи (`Reply-To`) и фиксируй, что он действует на всю текущую проектную сессию.
+  - Передавай `Reply-To` как структурированный блок (а не в свободной форме), например:
+    - `Reply-To:`
+    - `- InboxPath: C:\CorrisBot\Talker\Prompts\Inbox\Orc_<ProjectTag>`
+    - `- SenderID: Orc_<ProjectTag>`
+    - `- FilePattern: Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`
+    - `- Scope: use this Reply-To for all further reports/questions in this project session until Talker sends updated Reply-To`
+  - Этот блок обязателен для первого сообщения в проектной сессии и при явной смене маршрута.
+  - Если маршрут не менялся, не дублируй `Reply-To` в каждом следующем prompt.
+- Если пользователь просит "передай оркестратору ... и отчитайся сюда", по умолчанию это асинхронный сценарий:
+  - передай задачу оркестратору;
+  - завершай текущий turn без блокирующего ожидания;
+  - отчет оркестратора пересылай пользователю отдельным сообщением при поступлении.
+- Синхронный режим использовать только по явному запросу пользователя (например: "дождись ответа и верни в этом же сообщении"):
   - передай задачу оркестратору;
   - дождись отчета оркестратора;
-  - перешли пользователю содержимое отчета с указанием, от какого оркестратора пришло.
-- Не завершай ответ пользователю фразами вида "ждем отчет", если пользователь явно не просил асинхронный режим.
+  - верни пользователю содержимое отчета в том же сообщении/turn.
+- Допустимы короткие подтверждения постановки задачи ("принято, передал оркестратору"), без внутренних ожиданий, таймаутов и циклов "продолжаю ждать".
