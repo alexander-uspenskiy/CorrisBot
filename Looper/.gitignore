@@ -1,0 +1,11 @@
+# Runtime prompt queue and artifacts
+Prompts/
+
+# Python
+__pycache__/
+
+# Ad-hoc test prompt files in repo root
+/Prompt_*.md
+
+
+Looper.code-workspace
