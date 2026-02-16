@@ -1,0 +1,18 @@
+# Temporary and intermediate files
+Temp/
+
+# Looper runtime state
+**/Prompts/Inbox/Console.log
+**/Prompts/Inbox/*/loop_state.json
+
+# Prompt files and results (runtime communication, not source code)
+**/Prompts/Inbox/*/*.md
+
+# Looper file attachments
+**/Prompts/Inbox/*/Files/
+
+# Windows Terminal layout state
+wt_layout_state.json
+
+# Looper lock files
+.gateway.lock

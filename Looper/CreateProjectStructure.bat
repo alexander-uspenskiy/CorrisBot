@@ -67,6 +67,32 @@ for %%D in ("" "Executors" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestr
   )
 )
 
+if not exist "%DEST_ROOT%\.gitignore" (
+  if exist "%TEMPLATE_ROOT%\gitignore_template.txt" (
+    copy /Y "%TEMPLATE_ROOT%\gitignore_template.txt" "%DEST_ROOT%\.gitignore" >nul || (
+      echo Failed to copy .gitignore template
+      exit /b 9
+    )
+  )
+)
+
+if not exist "%DEST_ROOT%\.git\" (
+  pushd "%DEST_ROOT%"
+  git init >nul 2>&1 || (
+    echo Failed to initialize git repository
+    popd
+    exit /b 10
+  )
+  git add . >nul 2>&1
+  git commit -m "Initial project structure" >nul 2>&1 || (
+    echo Failed to create initial git commit
+    popd
+    exit /b 11
+  )
+  popd
+  echo Git repository initialized: "%DEST_ROOT%"
+)
+
 echo Project structure ensured successfully: "%DEST_PROJECT_ROOT%"
 exit /b 0
 
