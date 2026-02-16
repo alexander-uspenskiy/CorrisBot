@@ -303,7 +303,12 @@ class KimiRunner(AgentRunner):
             "-w", str(work_dir),
         ]
         if session_id:
+            # Resume existing session
             cmd.extend(["--session", session_id])
+        else:
+            # Create new session: generate UUID to avoid auto-attaching to existing session
+            import uuid
+            cmd.extend(["--session", str(uuid.uuid4())])
 
         # Длинные промпты не влезают в -c (лимит Windows).
         # Записываем во временный файл.
