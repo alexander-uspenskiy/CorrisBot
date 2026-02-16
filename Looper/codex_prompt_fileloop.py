@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from agent_runners import AgentRunner, CodexRunner
+
 ANSI_COLORS = {
     "gray": "\x1b[37m",
     "yellow": "\x1b[33m",
@@ -57,19 +59,11 @@ class LoopRunner:
         self,
         executor_dir: Path,
         inbox_root: Path,
-        sandbox_mode: str,
-        approval_policy: str,
-        web_search_enabled: bool,
-        dangerously_bypass_sandbox: bool,
-        codex_bin: Optional[str],
+        runner: AgentRunner,
     ) -> None:
         self.executor_dir = executor_dir
         self.inbox_root = inbox_root
-        self.sandbox_mode = sandbox_mode
-        self.approval_policy = approval_policy
-        self.web_search_enabled = web_search_enabled
-        self.dangerously_bypass_sandbox = dangerously_bypass_sandbox
-        self.codex_executable = self.resolve_codex_executable(codex_bin)
+        self.runner = runner
         self.inbox_root.mkdir(parents=True, exist_ok=True)
         self.legacy_inbox_state_path = self.inbox_root / "loop_state.json"
         self.console_log_path = self.inbox_root / "Console.log"
@@ -243,95 +237,6 @@ class LoopRunner:
             last_size = current_size
 
     @staticmethod
-    def get_thread_id_from_output(lines: list[str]) -> Optional[str]:
-        for line in lines:
-            trim = line.strip()
-            if not (trim.startswith("{") and trim.endswith("}")):
-                continue
-
-            try:
-                obj = json.loads(trim)
-            except Exception:
-                continue
-
-            if obj.get("type") == "thread.started" and obj.get("thread_id"):
-                return str(obj["thread_id"])
-
-        return None
-
-    def process_codex_line(self, line: str, started_commands: dict[str, bool]) -> None:
-        trim = line.strip()
-        if not trim:
-            return
-
-        if not (trim.startswith("{") and trim.endswith("}")):
-            if re.search(r"\b(error|exception|failed|fatal)\b", trim, flags=re.IGNORECASE):
-                self.write_console_line(trim, "red")
-            elif re.search(r"\bwarn\b", trim, flags=re.IGNORECASE):
-                self.write_console_line(trim, "darkgray")
-            return
-
-        try:
-            obj = json.loads(trim)
-        except Exception:
-            return
-
-        if obj.get("type") == "item.completed" and obj.get("item"):
-            item = obj["item"]
-            item_type = item.get("type")
-
-            if item_type == "reasoning" and item.get("text"):
-                self.write_console_line(f"[reasoning] {item['text']}", "darkgray")
-                return
-
-            if item_type == "agent_message" and item.get("text"):
-                self.write_console_line(f"[{self.executor_dir.name}] {item['text']}", "green")
-                return
-
-            if item_type == "command_execution":
-                item_id = str(item.get("id") or "")
-                cmd = str(item.get("command") or "")
-                status = str(item.get("status") or "")
-                code = item.get("exit_code")
-
-                if item_id and item_id in started_commands:
-                    if status == "completed":
-                        self.write_console_line(f"[command] (exit={code})", "darkgray")
-                    elif status == "failed":
-                        self.write_console_line(f"[command] (failed, exit={code})", "darkgray")
-                    elif status:
-                        self.write_console_line(f"[command] ({status})", "darkgray")
-                    else:
-                        self.write_console_line("[command]", "darkgray")
-                else:
-                    if status == "completed":
-                        self.write_console_line(f"[command] {cmd} (exit={code})", "darkgray")
-                    elif status == "failed":
-                        self.write_console_line(f"[command] {cmd} (failed, exit={code})", "darkgray")
-                    elif status:
-                        self.write_console_line(f"[command] {cmd} ({status})", "darkgray")
-                    else:
-                        self.write_console_line(f"[command] {cmd}", "darkgray")
-
-                aggregated_output = item.get("aggregated_output")
-                if aggregated_output:
-                    self.write_console_line(f"[command-output] {aggregated_output}", "darkgray")
-                return
-
-        if obj.get("type") == "item.started" and obj.get("item", {}).get("type") == "command_execution":
-            item = obj["item"]
-            item_id = str(item.get("id") or "")
-            cmd = str(item.get("command") or "")
-            if item_id:
-                started_commands[item_id] = True
-            self.write_console_line(f"[command] {cmd} (in_progress)", "darkgray")
-            return
-
-        if re.search(r"(error|failed)", str(obj.get("type") or ""), flags=re.IGNORECASE):
-            self.write_console_line(f"[error] {trim}", "red")
-            return
-
-    @staticmethod
     def build_loop_prompt(user_prompt: str, sender_id: str) -> str:
         # Core looper policy rules are centralized in each agent's AGENTS.md Read chain.
         # Keep only runtime execution
@@ -348,79 +253,17 @@ class LoopRunner:
         )
         return f"{rules}\n{user_prompt}"
 
-    @staticmethod
-    def resolve_codex_executable(codex_bin: Optional[str]) -> str:
-        if codex_bin:
-            candidate = Path(codex_bin).expanduser()
-            if candidate.exists():
-                return str(candidate.resolve())
-            return codex_bin
+    def run_agent(self, prompt_text: str, thread_id: Optional[str], result_path: Path) -> tuple[list[str], int, Optional[str]]:
+        cmd, stdin_text = self.runner.build_command(prompt_text, thread_id, self.executor_dir)
 
-        candidates: list[str] = []
-        for name in ["codex", "codex.cmd", "codex.exe"]:
-            found = shutil.which(name)
-            if found:
-                candidates.append(found)
-
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            npm_cmd = Path(appdata) / "npm" / "codex.cmd"
-            if npm_cmd.exists():
-                candidates.append(str(npm_cmd))
-
-        vscode_ext_root = Path.home() / ".vscode" / "extensions"
-        if vscode_ext_root.exists():
-            vscode_bins = sorted(
-                vscode_ext_root.glob("openai.chatgpt-*-win32-x64/bin/windows-x86_64/codex.exe"),
-                reverse=True,
-            )
-            for bin_path in vscode_bins:
-                candidates.append(str(bin_path))
-
-        seen: set[str] = set()
-        for candidate in candidates:
-            key = candidate.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            return candidate
-
-        raise RuntimeError(
-            "codex command was not found. Set PATH or pass --codex-bin with full path "
-            "(for example, C:\\Users\\<user>\\AppData\\Roaming\\npm\\codex.cmd)."
-        )
-
-    def run_codex(self, prompt_text: str, thread_id: Optional[str], result_path: Path) -> tuple[list[str], int]:
-        base_cmd = [self.codex_executable, "-C", str(self.executor_dir)]
-        if self.dangerously_bypass_sandbox:
-            base_cmd.append("--dangerously-bypass-approvals-and-sandbox")
-        else:
-            base_cmd.extend(["-a", self.approval_policy, "-s", self.sandbox_mode])
-        if not self.web_search_enabled:
-            base_cmd.extend(["-c", "tools.web_search=false"])
-
-        if thread_id:
-            cmd = base_cmd + [
-                "exec",
-                "resume",
-                thread_id,
-                "--skip-git-repo-check",
-                "--json",
-                "-",
-            ]
-        else:
-            cmd = base_cmd + [
-                "exec",
-                "--skip-git-repo-check",
-                "--json",
-                "-",
-            ]
+        self.runner.pre_run_hook()
 
         try:
+            stdin_mode = subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL
             proc = subprocess.Popen(
                 cmd,
                 text=True,
-                stdin=subprocess.PIPE,
+                stdin=stdin_mode,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=self.executor_dir,
@@ -429,15 +272,15 @@ class LoopRunner:
                 bufsize=1,
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(f"codex executable not found: {self.codex_executable}") from exc
+            raise RuntimeError(f"agent executable not found: {cmd[0]}") from exc
 
         lines: list[str] = []
         started_commands: dict[str, bool] = {}
         saw_turn_completed = False
         with result_path.open("a", encoding="utf-8") as result_file:
-            if proc.stdin:
+            if stdin_text is not None and proc.stdin:
                 try:
-                    proc.stdin.write(prompt_text)
+                    proc.stdin.write(stdin_text)
                     proc.stdin.close()
                 except (BrokenPipeError, OSError):
                     # Process may exit before accepting stdin; continue collecting stdout/stderr.
@@ -452,14 +295,50 @@ class LoopRunner:
                     result_file.write(with_debug_timestamps(raw_line))
                     # Keep Result.md observable for external stream readers (gateway).
                     result_file.flush()
-                    self.process_codex_line(line, started_commands)
-                    try:
-                        obj = json.loads(line)
-                        if obj.get("type") == "turn.completed":
-                            saw_turn_completed = True
-                            break
-                    except Exception:
-                        pass
+                    events = self.runner.parse_output_line(line, started_commands)
+                    for event in events:
+                        ev = event["event"]
+                        if ev == "reasoning":
+                            self.write_console_line(f"[reasoning] {event['text']}", "darkgray")
+                        elif ev == "agent_message":
+                            self.write_console_line(f"[{self.executor_dir.name}] {event['text']}", "green")
+                        elif ev == "command_started":
+                            self.write_console_line(f"[command] {event['command']} (in_progress)", "darkgray")
+                        elif ev == "command_completed":
+                            cmd_text = event.get("command", "")
+                            status = event.get("status", "")
+                            code = event.get("exit_code")
+                            was_started = event.get("was_started", False)
+                            if was_started:
+                                if status == "completed":
+                                    self.write_console_line(f"[command] (exit={code})", "darkgray")
+                                elif status == "failed":
+                                    self.write_console_line(f"[command] (failed, exit={code})", "darkgray")
+                                elif status:
+                                    self.write_console_line(f"[command] ({status})", "darkgray")
+                                else:
+                                    self.write_console_line("[command]", "darkgray")
+                            else:
+                                if status == "completed":
+                                    self.write_console_line(f"[command] {cmd_text} (exit={code})", "darkgray")
+                                elif status == "failed":
+                                    self.write_console_line(f"[command] {cmd_text} (failed, exit={code})", "darkgray")
+                                elif status:
+                                    self.write_console_line(f"[command] {cmd_text} ({status})", "darkgray")
+                                else:
+                                    self.write_console_line(f"[command] {cmd_text}", "darkgray")
+                            output = event.get("output")
+                            if output:
+                                self.write_console_line(f"[command-output] {output}", "darkgray")
+                        elif ev == "non_json_error":
+                            self.write_console_line(event["text"], "red")
+                        elif ev == "non_json_warning":
+                            self.write_console_line(event["text"], "darkgray")
+                        elif ev == "error":
+                            self.write_console_line(f"[error] {event['text']}", "red")
+                    if self.runner.is_turn_completed(line):
+                        saw_turn_completed = True
+                        break
             if saw_turn_completed and proc.poll() is None:
                 # Turn is already complete; stop codex wrapper process tree so the loop can continue.
                 subprocess.run(
@@ -479,7 +358,16 @@ class LoopRunner:
                 return_code = 0 if polled is None else (0 if polled != 0 else polled)
             else:
                 return_code = proc.wait()
-        return lines, return_code
+
+        # Determine session_id from output (Codex) or filesystem (Kimi)
+        detected_session_id = self.runner.extract_session_id(lines)
+        if detected_session_id is None:
+            detected_session_id = self.runner.post_run_hook(lines)
+
+        # Cleanup (e.g., temp files for Kimi)
+        self.runner.post_run_cleanup()
+
+        return lines, return_code, detected_session_id
 
     def append_result_header(self, result_path: Path, prompt_name: str) -> None:
         header = (
@@ -637,22 +525,8 @@ class LoopRunner:
             return None
 
         # --- Step 1: extract agent_message texts from JSON lines ----------
-        agent_texts: list[str] = []
-        for file_line in raw_content.splitlines():
-            stripped = file_line.strip()
-            if not (stripped.startswith("{") and stripped.endswith("}")):
-                continue
-            try:
-                obj = json.loads(stripped)
-            except Exception:
-                continue
-            if (
-                obj.get("type") == "item.completed"
-                and isinstance(obj.get("item"), dict)
-                and obj["item"].get("type") == "agent_message"
-                and obj["item"].get("text")
-            ):
-                agent_texts.append(str(obj["item"]["text"]))
+        file_lines = raw_content.splitlines()
+        agent_texts = self.runner.extract_agent_messages(file_lines)
 
         if not agent_texts:
             return None
@@ -825,14 +699,11 @@ class LoopRunner:
             prompt_text = self.build_loop_prompt(user_prompt_text, sender_id)
             used_resume = bool(thread_id and thread_id.strip())
 
-            lines, exit_code = self.run_codex(prompt_text, thread_id if used_resume else None, result_path)
+            lines, exit_code, detected_session_id = self.run_agent(prompt_text, thread_id if used_resume else None, result_path)
 
             if exit_code != 0 and used_resume:
                 resume_err = "\n".join(lines)
-                if re.search(
-                    r"(?i)(session|thread).*(not found|missing|unknown)|not found.*(session|thread)",
-                    resume_err,
-                ):
+                if self.runner.is_session_not_found_error(resume_err):
                     self.append_text(
                         result_path,
                         "\nResume failed because session was not found. Starting a new session for this prompt.\n",
@@ -840,19 +711,24 @@ class LoopRunner:
                     thread_id = None
 
                     self.append_text(result_path, "\n--- Fallback: new session attempt ---\n\n")
-                    lines, exit_code = self.run_codex(prompt_text, None, result_path)
+                    lines, exit_code, detected_session_id = self.run_agent(prompt_text, None, result_path)
 
             if exit_code != 0:
                 self.append_text(result_path, f"\nCommand failed with exit code: {exit_code}\n")
-                raise RuntimeError(f"codex command failed with exit code {exit_code}")
+                raise RuntimeError(f"agent command failed with exit code {exit_code}")
 
-            detected_thread_id = self.get_thread_id_from_output(lines)
-            if detected_thread_id:
-                thread_id = detected_thread_id
+            # "thread_id" field stores agent-specific session ID:
+            # Codex: thread_id string, Kimi: session UUID.
+            if detected_session_id:
+                thread_id = detected_session_id
 
             if not (thread_id and thread_id.strip()):
-                self.append_text(result_path, "\nCould not detect thread_id from codex output.\n")
-                raise RuntimeError("thread_id was not detected; refusing to continue without explicit session id.")
+                if self.runner.supports_filesystem_session_detection:
+                    # Kimi: filesystem session detection is best-effort, не критично
+                    self.write_console_line("[warning] Could not detect Kimi session ID from filesystem.", "darkgray")
+                else:
+                    self.append_text(result_path, "\nCould not detect session_id from agent output.\n")
+                    raise RuntimeError("session_id was not detected; refusing to continue without explicit session id.")
 
             # --- Relay bypass: auto-deliver relay content to target inbox ---
             # NOTE: Relay is processed AFTER thread_id validation to avoid duplicate
@@ -914,6 +790,12 @@ def parse_args() -> argparse.Namespace:
         "--codex-bin",
         help="Optional explicit path to codex executable (.exe/.cmd).",
     )
+    parser.add_argument(
+        "--runner",
+        default="codex",
+        choices=["codex", "kimi"],
+        help="CLI agent backend to use (default: codex).",
+    )
     return parser.parse_args()
 
 
@@ -937,16 +819,27 @@ def main() -> int:
     if not agent_dir.exists():
         raise RuntimeError(f"Agent directory not found: {agent_dir}")
 
-    runner = LoopRunner(
+    if args.runner == "codex":
+        runner = CodexRunner(
+            codex_bin=args.codex_bin,
+            sandbox_mode=args.sandbox,
+            approval_policy=args.approval,
+            web_search_enabled=args.allow_web_search,
+            dangerously_bypass_sandbox=args.dangerously_bypass_sandbox,
+        )
+    elif args.runner == "kimi":
+        # KimiRunner добавляется на Этапе 3. До реализации --runner kimi даст ImportError.
+        from agent_runners import KimiRunner
+        runner = KimiRunner()
+    else:
+        raise RuntimeError(f"Unknown runner: {args.runner}")
+
+    loop_runner = LoopRunner(
         executor_dir=agent_dir,
         inbox_root=inbox_root,
-        sandbox_mode=args.sandbox,
-        approval_policy=args.approval,
-        web_search_enabled=args.allow_web_search,
-        dangerously_bypass_sandbox=args.dangerously_bypass_sandbox,
-        codex_bin=args.codex_bin,
+        runner=runner,
     )
-    runner.run_forever()
+    loop_runner.run_forever()
     return 0
 
 
