@@ -609,86 +609,106 @@ class LoopRunner:
         return messages
 
     def detect_relay_block(self, result_path: Path) -> Optional[tuple[str, str]]:
-        """Detect YAML relay block in result file and extract target + content.
-        
-        YAML block format:
+        """Detect YAML relay block in a Result file and extract target + content.
+
+        Result files are sequences of JSON lines from Codex.  The YAML relay
+        block lives inside the ``"text"`` field of ``agent_message`` JSON
+        events, **not** as standalone file lines.  We therefore:
+
+        1. Parse each file line as JSON.
+        2. Collect ``agent_message`` texts.
+        3. Split collected text into lines and search for the relay block.
+
+        YAML block format (inside agent_message text)::
+
             ---
             type: relay
             target: <UserSenderID>
             from: <sender_id>
             ---
             [Relay content here]
-        
-        Returns (target, relay_content) if relay block found, None otherwise.
-        
-        NOTE: This is a simplified parser that assumes:
-        - YAML block starts at beginning of a line with ---
-        - Keys and values are on the same line (key: value)
-        - Does not support multi-line values or nested structures
+
+        Returns ``(target, relay_content)`` if a relay block is found,
+        ``None`` otherwise.
         """
         try:
-            content = result_path.read_text(encoding="utf-8")
+            raw_content = result_path.read_text(encoding="utf-8")
         except Exception:
             return None
-        
-        # Find YAML block starting with --- at line start (to avoid JSON false positives)
-        lines = content.splitlines()
-        in_relay_block = False
-        relay_lines: list[str] = []
-        relay_metadata: dict[str, str] = {}
-        closing_dash_idx = -1
-        
+
+        # --- Step 1: extract agent_message texts from JSON lines ----------
+        agent_texts: list[str] = []
+        for file_line in raw_content.splitlines():
+            stripped = file_line.strip()
+            if not (stripped.startswith("{") and stripped.endswith("}")):
+                continue
+            try:
+                obj = json.loads(stripped)
+            except Exception:
+                continue
+            if (
+                obj.get("type") == "item.completed"
+                and isinstance(obj.get("item"), dict)
+                and obj["item"].get("type") == "agent_message"
+                and obj["item"].get("text")
+            ):
+                agent_texts.append(str(obj["item"]["text"]))
+
+        if not agent_texts:
+            return None
+
+        # --- Step 2: search for YAML relay block in agent_message text ----
+        # Combine all agent_message fragments (usually one, but be safe).
+        combined = "\n".join(agent_texts)
+        lines = combined.splitlines()
+
+        in_block = False
+        block_lines: list[str] = []
+        metadata: dict[str, str] = {}
+        closing_idx = -1
+
         for i, line in enumerate(lines):
-            # Only match --- at the beginning of line (not inside JSON strings)
-            if line.strip() == "---" and (line == "---" or line.startswith("---")):
-                if not in_relay_block:
-                    # Potential start of relay block
-                    in_relay_block = True
-                    relay_lines = []
+            if line.strip() == "---":
+                if not in_block:
+                    in_block = True
+                    block_lines = []
+                    metadata = {}
                     continue
                 else:
-                    # Closing --- of relay block - validate this is a relay block
+                    # Closing --- — validate collected metadata.
                     is_relay = False
-                    for relay_line in relay_lines:
-                        line_stripped = relay_line.strip()
-                        # Parse key: value format exactly
-                        if line_stripped.startswith("type:"):
-                            type_value = line_stripped.split(":", 1)[1].strip()
-                            if type_value == "relay":
+                    for bl in block_lines:
+                        key_line = bl.strip()
+                        if key_line.startswith("type:"):
+                            if key_line.split(":", 1)[1].strip() == "relay":
                                 is_relay = True
-                        elif line_stripped.startswith("target:"):
-                            parts = line_stripped.split(":", 1)
-                            if len(parts) == 2:
-                                relay_metadata["target"] = parts[1].strip()
-                        elif line_stripped.startswith("from:"):
-                            parts = line_stripped.split(":", 1)
-                            if len(parts) == 2:
-                                relay_metadata["from"] = parts[1].strip()
-                    
-                    if is_relay and "target" in relay_metadata:
-                        closing_dash_idx = i
+                        elif key_line.startswith("target:"):
+                            metadata["target"] = key_line.split(":", 1)[1].strip()
+                        elif key_line.startswith("from:"):
+                            metadata["from"] = key_line.split(":", 1)[1].strip()
+
+                    if is_relay and "target" in metadata:
+                        closing_idx = i
                         break
-                    else:
-                        # Not a relay block, reset and continue searching
-                        in_relay_block = False
-                        relay_lines = []
-                        relay_metadata = {}
-            
-            if in_relay_block:
-                relay_lines.append(line)
-        
-        if closing_dash_idx == -1 or "target" not in relay_metadata:
+                    # Not a valid relay block — reset and keep searching.
+                    in_block = False
+                    block_lines = []
+                    metadata = {}
+                    continue
+
+            if in_block:
+                block_lines.append(line)
+
+        if closing_idx == -1 or "target" not in metadata:
             return None
-        
-        # Extract relay content: everything after closing ---
-        relay_content_lines = lines[closing_dash_idx + 1:]
-        
-        # Remove empty lines at the beginning
+
+        # Relay content: everything after closing --- in combined text.
+        relay_content_lines = lines[closing_idx + 1:]
+        # Trim leading blank lines.
         while relay_content_lines and not relay_content_lines[0].strip():
             relay_content_lines.pop(0)
-        
-        relay_content = "\n".join(relay_content_lines)
-        return relay_metadata["target"], relay_content
+
+        return metadata["target"], "\n".join(relay_content_lines)
     
     def _is_valid_target_name(self, target: str) -> bool:
         """Validate target folder name - must be a simple name, not a path."""
