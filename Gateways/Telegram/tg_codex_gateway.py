@@ -1129,16 +1129,25 @@ async def _process_result_file_incremental(bot, sender_id: str, result_name: str
     messages = _extract_messages_with_runner(all_lines, runner_name)
     new_messages = []
     for msg in messages:
-      # Use message hash as event key
       msg_hash = hashlib.md5(msg.encode("utf-8")).hexdigest()[:16]
       event_key = f"msg:{msg_hash}"
       if event_key not in delivered_event_keys:
         new_messages.append((msg, event_key))
     
     for msg, event_key in new_messages:
-      if not await _send_text(bot, chat_id, msg):
+      try:
+        await _send_text(bot, chat_id, msg)
+      except Exception:
+        # Still commit offset to avoid infinite loop
+        offset = file_size
+        _state_commit_result(sender_id, result_name, offset, completed, epoch)
         return False, emitted_any
-      if not _state_mark_event_delivered(sender_id, result_name, event_key, epoch):
+      
+      mark_result = _state_mark_event_delivered(sender_id, result_name, event_key, epoch)
+      if not mark_result:
+        # Still commit offset to avoid infinite loop
+        offset = file_size
+        _state_commit_result(sender_id, result_name, offset, completed, epoch)
         return False, emitted_any
       delivered_event_keys.add(event_key)
       emitted_any = True
