@@ -387,6 +387,8 @@ def parse_args() -> argparse.Namespace:
         help="Path to WT layout config file.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print command without launching WT.")
+    parser.add_argument("--runner", default=None, choices=["codex", "kimi"],
+                        help="CLI agent backend: codex (default) or kimi.")
     return parser.parse_args()
 
 
@@ -457,7 +459,8 @@ def main() -> int:
     tab_index, pane_index = choose_target(tab_counts, max_panes)
 
     # Determine runner type (codex or kimi)
-    runner = str(config_raw.get("runner", "codex")).lower()
+    # Priority: CLI argument > config file > default
+    runner = args.runner or str(config_raw.get("runner", "codex")).lower()
     if runner not in ("codex", "kimi"):
         runner = "codex"
     
