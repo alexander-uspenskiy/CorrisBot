@@ -608,6 +608,131 @@ class LoopRunner:
                 messages.append(f"Waiting: {sender_dir}")
         return messages
 
+    def detect_relay_block(self, result_path: Path) -> Optional[tuple[str, str]]:
+        """Detect YAML relay block in result file and extract target + content.
+        
+        YAML block format:
+            ---
+            type: relay
+            target: <UserSenderID>
+            from: <sender_id>
+            ---
+            [Relay content here]
+        
+        Returns (target, relay_content) if relay block found, None otherwise.
+        
+        NOTE: This is a simplified parser that assumes:
+        - YAML block starts at beginning of a line with ---
+        - Keys and values are on the same line (key: value)
+        - Does not support multi-line values or nested structures
+        """
+        try:
+            content = result_path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+        
+        # Find YAML block starting with --- at line start (to avoid JSON false positives)
+        lines = content.splitlines()
+        in_relay_block = False
+        relay_lines: list[str] = []
+        relay_metadata: dict[str, str] = {}
+        closing_dash_idx = -1
+        
+        for i, line in enumerate(lines):
+            # Only match --- at the beginning of line (not inside JSON strings)
+            if line.strip() == "---" and (line == "---" or line.startswith("---")):
+                if not in_relay_block:
+                    # Potential start of relay block
+                    in_relay_block = True
+                    relay_lines = []
+                    continue
+                else:
+                    # Closing --- of relay block - validate this is a relay block
+                    is_relay = False
+                    for relay_line in relay_lines:
+                        line_stripped = relay_line.strip()
+                        # Parse key: value format exactly
+                        if line_stripped.startswith("type:"):
+                            type_value = line_stripped.split(":", 1)[1].strip()
+                            if type_value == "relay":
+                                is_relay = True
+                        elif line_stripped.startswith("target:"):
+                            parts = line_stripped.split(":", 1)
+                            if len(parts) == 2:
+                                relay_metadata["target"] = parts[1].strip()
+                        elif line_stripped.startswith("from:"):
+                            parts = line_stripped.split(":", 1)
+                            if len(parts) == 2:
+                                relay_metadata["from"] = parts[1].strip()
+                    
+                    if is_relay and "target" in relay_metadata:
+                        closing_dash_idx = i
+                        break
+                    else:
+                        # Not a relay block, reset and continue searching
+                        in_relay_block = False
+                        relay_lines = []
+                        relay_metadata = {}
+            
+            if in_relay_block:
+                relay_lines.append(line)
+        
+        if closing_dash_idx == -1 or "target" not in relay_metadata:
+            return None
+        
+        # Extract relay content: everything after closing ---
+        relay_content_lines = lines[closing_dash_idx + 1:]
+        
+        # Remove empty lines at the beginning
+        while relay_content_lines and not relay_content_lines[0].strip():
+            relay_content_lines.pop(0)
+        
+        relay_content = "\n".join(relay_content_lines)
+        return relay_metadata["target"], relay_content
+    
+    def _is_valid_target_name(self, target: str) -> bool:
+        """Validate target folder name - must be a simple name, not a path."""
+        if not target or target.strip() != target:
+            return False
+        # Disallow path traversal and directory separators
+        if ".." in target or "/" in target or "\\" in target:
+            return False
+        # Must not be empty or only whitespace after stripping
+        if not target.strip():
+            return False
+        return True
+    
+    def handle_relay_delivery(self, target: str, relay_content: str) -> None:
+        """Create relay Result file in target inbox.
+        
+        Creates a file named Prompt_<timestamp>_relay_Result.md in the target inbox.
+        The _relay suffix allows Gateway to identify it while Looper ignores it
+        (Looper skips files ending with _Result.md).
+        """
+        # Validate target to prevent directory traversal
+        if not self._is_valid_target_name(target):
+            self.write_console_line(f"[relay] ERROR: Invalid target name '{target}'", "red")
+            return
+        
+        target_inbox = self.inbox_root / target
+        target_inbox.mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename: Prompt_<timestamp>_relay_Result.md
+        # Use consistent timestamp format matching other parts of the codebase
+        timestamp = datetime.now().strftime("%Y_%m_%d_%H_%M_%S_%f")[:-3]  # milliseconds
+        filename = f"Prompt_{timestamp}_relay_Result.md"
+        relay_path = target_inbox / filename
+        
+        # Write relay content with error handling
+        try:
+            relay_path.write_text(
+                f"# Relay Result\n\n{relay_content}\n\nFinished: {now_str()}\n",
+                encoding="utf-8"
+            )
+            self.write_console_line(f"[relay] Delivered to {target}: {filename}")
+        except OSError as e:
+            self.write_console_line(f"[relay] ERROR: Failed to write relay file to {target}: {e}", "red")
+    
     def run_forever(self) -> None:
         self.write_console_line(f"Watching inbox root: {self.inbox_root}")
         sender_last_processed_marker: dict[str, str] = {}
@@ -708,6 +833,14 @@ class LoopRunner:
             if not (thread_id and thread_id.strip()):
                 self.append_text(result_path, "\nCould not detect thread_id from codex output.\n")
                 raise RuntimeError("thread_id was not detected; refusing to continue without explicit session id.")
+
+            # --- Relay bypass: auto-deliver relay content to target inbox ---
+            # NOTE: Relay is processed AFTER thread_id validation to avoid duplicate
+            # deliveries if looper crashes/restarts due to missing thread_id.
+            relay_result = self.detect_relay_block(result_path)
+            if relay_result is not None:
+                relay_target, relay_content = relay_result
+                self.handle_relay_delivery(relay_target, relay_content)
 
             self.append_text(result_path, f"\nFinished: {now_str()}\n")
 
