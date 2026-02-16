@@ -653,22 +653,15 @@ class LoopRunner:
     def run_forever(self) -> None:
         self.write_console_line(f"Watching inbox root: {self.inbox_root}")
         sender_last_processed_marker: dict[str, str] = {}
-        thread_id: Optional[str] = None
-        best_thread_updated_at = ""
+        # Per-sender thread_id storage - each sender has its own session (no global shared thread_id)
+        sender_thread_id: dict[str, Optional[str]] = {}
 
+        # Initialize state for all senders
         for sender_dir in self.get_sender_dirs():
             sender_id = sender_dir.name
-            state_thread_id, last_processed_marker, updated_at = self.read_sender_state(sender_dir)
+            state_thread_id, last_processed_marker, _ = self.read_sender_state(sender_dir)
             sender_last_processed_marker[sender_id] = last_processed_marker
-            if state_thread_id and (not best_thread_updated_at or updated_at >= best_thread_updated_at):
-                thread_id = state_thread_id
-                best_thread_updated_at = updated_at
-
-        legacy_thread_id, legacy_last_marker_map = self.read_legacy_inbox_state()
-        for sender_id, marker in legacy_last_marker_map.items():
-            sender_last_processed_marker.setdefault(sender_id, marker)
-        if (not thread_id) and legacy_thread_id:
-            thread_id = legacy_thread_id
+            sender_thread_id[sender_id] = state_thread_id
 
         waiting_logged = False
 
@@ -712,7 +705,7 @@ class LoopRunner:
                     ),
                 )
                 sender_last_processed_marker[sender_id] = marker
-                self.write_sender_state(sender_dir, thread_id, marker)
+                self.write_sender_state(sender_dir, sender_thread_id.get(sender_id), marker)
                 self.write_console_line(
                     f"Stop command received from {sender_id}/{prompt_name}. Exiting loop.",
                     "yellow",
@@ -720,6 +713,7 @@ class LoopRunner:
                 return
 
             prompt_text = self.build_loop_prompt(user_prompt_text, sender_id)
+            thread_id = sender_thread_id.get(sender_id)
             used_resume = bool(thread_id and thread_id.strip())
 
             lines, exit_code, detected_session_id = self.run_agent(prompt_text, thread_id if used_resume else None, result_path)
@@ -731,6 +725,7 @@ class LoopRunner:
                         result_path,
                         "\nResume failed because session was not found. Starting a new session for this prompt.\n",
                     )
+                    sender_thread_id[sender_id] = None
                     thread_id = None
 
                     self.append_text(result_path, "\n--- Fallback: new session attempt ---\n\n")
@@ -743,8 +738,10 @@ class LoopRunner:
             # "thread_id" field stores agent-specific session ID:
             # Codex: thread_id string, Kimi: session UUID.
             if detected_session_id:
+                sender_thread_id[sender_id] = detected_session_id
                 thread_id = detected_session_id
 
+            thread_id = sender_thread_id.get(sender_id)
             if not (thread_id and thread_id.strip()):
                 if self.runner.supports_filesystem_session_detection:
                     # Kimi: filesystem session detection is best-effort, не критично
