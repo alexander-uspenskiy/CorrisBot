@@ -483,18 +483,6 @@ class KimiRunner(AgentRunner):
                             best_mtime = mtime
                             best = sid
             return best
-        # Нет новых сессий — возможно resume существующей.
-        # Найти самую свежую по mtime context.jsonl
-        best = None
-        best_mtime = 0.0
-        for hash_dir in self.KIMI_SESSION_DIR.iterdir():
-            if not hash_dir.is_dir():
-                continue
-            for session_dir in hash_dir.iterdir():
-                ctx = session_dir / "context.jsonl"
-                if ctx.exists():
-                    mtime = ctx.stat().st_mtime
-                    if mtime > best_mtime:
-                        best_mtime = mtime
-                        best = session_dir.name
-        return best
+        # Нет новых сессий — значит Kimi использовал существующую (возможно, /reset)
+        # Не возвращаем ничего, чтобы не перезаписать thread_id на старое значение
+        return None
