@@ -456,9 +456,15 @@ def main() -> int:
     tab_counts = build_tab_counts(slots)
     tab_index, pane_index = choose_target(tab_counts, max_panes)
 
-    loop_bat_path = (SCRIPT_DIR / "CodexLoop.bat").resolve()
+    # Determine runner type (codex or kimi)
+    runner = str(config_raw.get("runner", "codex")).lower()
+    if runner not in ("codex", "kimi"):
+        runner = "codex"
+    
+    loop_bat_name = "KimiLoop.bat" if runner == "kimi" else "CodexLoop.bat"
+    loop_bat_path = (SCRIPT_DIR / loop_bat_name).resolve()
     if not loop_bat_path.is_file():
-        raise RuntimeError(f"CodexLoop.bat not found: {loop_bat_path}")
+        raise RuntimeError(f"{loop_bat_name} not found: {loop_bat_path}")
 
     tab_label = f"{tab_name_prefix}-{tab_index + 1:02d}"
     agent_label = agent_path.replace("\\", "/")
@@ -528,6 +534,7 @@ def main() -> int:
             "tab_name_prefix": tab_name_prefix,
             "tab_index_offset": tab_index_offset,
             "agent_slots": slots,
+            "runner": runner,
             "updated_at": now_iso(),
         },
     )

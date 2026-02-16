@@ -15,5 +15,5 @@ if "%~1"=="" (
 set "AGENT_PATH=%~2"
 if "%AGENT_PATH%"=="" set "AGENT_PATH=."
 
-py -3 .\codex_prompt_fileloop.py --project-root "%~1" --agent-path "%AGENT_PATH%" --dangerously-bypass-sandbox
+py -3 .\codex_prompt_fileloop.py --project-root "%~1" --agent-path "%AGENT_PATH%" --runner codex --dangerously-bypass-sandbox
 pause
