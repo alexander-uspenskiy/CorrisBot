@@ -1,6 +1,6 @@
 Loop agent code (Git)
 
-
+Multi-agent support: Codex + Kimi Code CLI (see --runner argument)
 
 codex_prompt_fileloop.ps1 - LEGACY test code  (search in Git History)
 

@@ -23,6 +23,40 @@ Example: `cd /d <ProjectPath>\Executors && "C:\CorrisBot\Looper\CreateExecutorSt
 Например, `c:\Minesweeper\.MigrationToIOs`  - Это проект миграции на iOs.
 А может быть `c:\Minesweeper\.UIRefactoring` - это проект рефакторинга.
 
+# Выбор CLI-агента (runner)
+
+Looper поддерживает два CLI-агента для выполнения задач:
+- **Codex** (OpenAI) — дефолтный агент, используется по умолчанию
+- **Kimi** (Kimi Code CLI) — альтернативный агент
+
+## Указание runner при запуске
+
+### Через StartLoopsInWT.py
+В конфигурационном файле `loops.wt.json` добавьте поле `"runner"`:
+```json
+{
+  "runner": "kimi",
+  "max_panes_per_tab": 4
+}
+```
+Допустимые значения: `"codex"` (по умолчанию) или `"kimi"`.
+
+### Через .bat файлы напрямую
+- **Codex**: `CodexLoop.bat <project_root> [agent_path]`
+- **Kimi**: `KimiLoop.bat <project_root> [agent_path]`
+
+### Через codex_prompt_fileloop.py
+```bash
+py -3 codex_prompt_fileloop.py --project-root <path> --agent-path <path> --runner <codex|kimi>
+```
+
+## Особенности Kimi Runner
+
+- Session ID определяется через файловую систему (`~/.kimi/sessions/`)
+- Нет аналога `turn.completed` — процесс завершается по EOF
+- Промпт передаётся через аргумент `-c` (не через stdin)
+- Длинные промпты (>8000 символов) автоматически записываются во временный файл
+
 ### Stopping an agent looper (graceful)
 
 When an agent looper is no longer needed, stop it via inbox prompt command:
