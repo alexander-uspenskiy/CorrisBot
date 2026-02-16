@@ -1650,13 +1650,14 @@ async def cmd_reset_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Access denied.")
     return
 
-  sender_id = _resolve_sender_id(update)
   try:
     async with _DELIVERY_SEND_LOCK:
       async with _SUBMIT_LOCK:
-        removed = _reset_sender_dir(sender_id)
+        # Reset ALL senders in Talker to fully reset the session
+        # (Talker has one session shared across all senders)
+        sender_count, removed_files = _reset_all_sender_dirs()
     await update.message.reply_text(
-      f"OK. reset_session done for sender: {sender_id}. Removed files: {removed}"
+      f"OK. reset_session done for Talker. Senders reset: {sender_count}. Removed files: {removed_files}"
     )
   except Exception as e:
     await update.message.reply_text(f"reset_session failed: {e}")
