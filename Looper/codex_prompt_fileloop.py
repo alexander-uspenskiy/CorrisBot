@@ -285,7 +285,7 @@ class LoopRunner:
                 return
 
             if item_type == "agent_message" and item.get("text"):
-                self.write_console_line(f"[agent] {item['text']}", "green")
+                self.write_console_line(f"[{self.executor_dir.name}] {item['text']}", "green")
                 return
 
             if item_type == "command_execution":
