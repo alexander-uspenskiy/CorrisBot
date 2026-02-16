@@ -391,7 +391,9 @@ class LoopRunner:
         return lines, return_code, detected_session_id
 
     def append_result_header(self, result_path: Path, prompt_name: str) -> None:
+        # Runner metadata for gateway to select correct parser
         header = (
+            f"<!-- runner: {self.runner.runner_name} -->\n"
             f"# Codex Result for {prompt_name}\n\n"
             f"Started: {now_str()}\n\n"
         )

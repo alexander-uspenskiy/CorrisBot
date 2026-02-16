@@ -63,6 +63,10 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
+# Import agent runners for result parsing
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'Looper'))
+from agent_runners import CodexRunner, KimiRunner
+
 # --- Single instance lock ---
 _LOCK_FILE = os.path.join(os.getcwd(), ".gateway.lock")
 
@@ -776,10 +780,42 @@ if _SENDER_ID_OVERRIDE:
     _set_sender_chat(_sanitize_sender_id(_SENDER_ID_OVERRIDE), ALLOWED_CHAT_ID_INT)
     _save_delivery_state()
 
+# --- Runner-aware result parsing ---
+_RUNNER_CACHE: Dict[str, str] = {}  # result_path -> runner_name
+
+def _detect_runner_from_result(result_path: str) -> str:
+  """Detect runner type from first line of result file (<!-- runner: X -->)."""
+  if result_path in _RUNNER_CACHE:
+    return _RUNNER_CACHE[result_path]
+  
+  try:
+    with open(result_path, "r", encoding="utf-8") as f:
+      first_line = f.readline()
+  except Exception:
+    return "codex"  # default
+  
+  match = re.match(r"^<!--\s*runner:\s*(\w+)\s*-->", first_line.strip())
+  runner = match.group(1) if match else "codex"
+  _RUNNER_CACHE[result_path] = runner
+  return runner
+
+def _extract_messages_with_runner(lines: List[str], runner_name: str) -> List[str]:
+  """Extract agent messages using appropriate runner's extract_agent_messages."""
+  if runner_name == "kimi":
+    runner = KimiRunner()
+  else:
+    runner = CodexRunner()
+  
+  try:
+    return runner.extract_agent_messages(lines)
+  except Exception:
+    return []
+
 def _process_looper_json_line(line: str, started_commands: Dict[str, bool]) -> Tuple[List[str], bool]:
   """
   Parse one JSON line from result stream.
   Returns (messages_to_emit, saw_turn_completed).
+  DEPRECATED: Use _extract_messages_with_runner for new code.
   """
   try:
     obj = json.loads(line)
@@ -1002,7 +1038,10 @@ async def _process_result_line(bot, chat_id: int, line: str, started_commands: D
     return False, False, False, True
 
   # Ignore markdown framing lines produced by looper result writer.
-  if trim.startswith("# Codex Result for ") or trim.startswith("Started: ") or trim.startswith("--- Fallback:"):
+  if (trim.startswith("# Codex Result for ") or 
+      trim.startswith("Started: ") or 
+      trim.startswith("--- Fallback:") or
+      trim.startswith("<!-- runner:")):
     return False, False, False, True
 
   if trim.startswith("{") and trim.endswith("}"):
@@ -1064,6 +1103,9 @@ async def _process_result_file_incremental(bot, sender_id: str, result_name: str
   if chat_id is None:
     return False, False
 
+  # Detect runner type from file header
+  runner_name = _detect_runner_from_result(result_path)
+
   try:
     with open(result_path, "rb") as f:
       f.seek(offset)
@@ -1075,6 +1117,46 @@ async def _process_result_file_incremental(bot, sender_id: str, result_name: str
     return state_changed, False
 
   _append_raw(session_stdout_path, chunk.decode("utf-8", errors="replace"))
+  
+  # For Kimi runner, use extract_agent_messages() on all lines
+  if runner_name == "kimi":
+    try:
+      with open(result_path, "r", encoding="utf-8") as f:
+        all_lines = f.read().splitlines()
+    except Exception:
+      return state_changed, False
+    
+    messages = _extract_messages_with_runner(all_lines, runner_name)
+    new_messages = []
+    for msg in messages:
+      # Use message hash as event key
+      msg_hash = hashlib.md5(msg.encode("utf-8")).hexdigest()[:16]
+      event_key = f"msg:{msg_hash}"
+      if event_key not in delivered_event_keys:
+        new_messages.append((msg, event_key))
+    
+    for msg, event_key in new_messages:
+      if not await _send_text(bot, chat_id, msg):
+        return False, emitted_any
+      if not _state_mark_event_delivered(sender_id, result_name, event_key, epoch):
+        return False, emitted_any
+      delivered_event_keys.add(event_key)
+      emitted_any = True
+      if _CONSOLE_MODE == "full":
+        print(f"[stream] {msg}")
+    
+    # Check for completion markers
+    chunk_text = chunk.decode("utf-8", errors="replace")
+    if "Finished:" in chunk_text:
+      completed = True
+    
+    offset = file_size  # Kimi output is processed as a whole
+    committed = _state_commit_result(sender_id, result_name, offset, completed, epoch)
+    if not committed:
+      return False, emitted_any
+    return True, emitted_any
+
+  # Codex runner: process line by line (original logic)
   started_commands: Dict[str, bool] = {}
   consumed = 0
 
