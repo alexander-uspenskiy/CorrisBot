@@ -261,3 +261,221 @@ class CodexRunner(AgentRunner):
             r"(?i)(session|thread).*(not found|missing|unknown)|not found.*(session|thread)",
             output,
         ))
+
+
+class KimiRunner(AgentRunner):
+    KIMI_SESSION_DIR = Path.home() / ".kimi" / "sessions"
+    MAX_CMD_LENGTH = 8000  # Windows cmd limit ~8191 chars
+
+    def __init__(self):
+        self._executable = self.resolve_executable()
+        self._last_temp_file: Optional[str] = None
+        self._sessions_before: Optional[set[str]] = None
+
+    def resolve_executable(self) -> str:
+        for name in ["kimi", "kimi.exe", "kimi.cmd"]:
+            found = shutil.which(name)
+            if found:
+                return found
+        raise RuntimeError(
+            "kimi command not found. Install Kimi Code CLI: pip install kimi-cli"
+        )
+
+    def build_command(self, prompt_text, session_id, work_dir):
+        cmd = [
+            self._executable,
+            "--print", "--output-format", "stream-json",
+            "--yolo",
+            "-w", str(work_dir),
+        ]
+        if session_id:
+            cmd.extend(["--session", session_id])
+
+        # Длинные промпты не влезают в -c (лимит Windows).
+        # Записываем во временный файл.
+        if len(prompt_text) > self.MAX_CMD_LENGTH:
+            import tempfile
+            tmp_dir = work_dir / "Temp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", delete=False,
+                encoding="utf-8", dir=str(tmp_dir),
+            )
+            tmp.write(prompt_text)
+            tmp.close()
+            self._last_temp_file = tmp.name
+            prompt_arg = f"Read file {tmp.name} and follow all instructions in it exactly."
+        else:
+            self._last_temp_file = None
+            prompt_arg = prompt_text
+
+        cmd.extend(["-c", prompt_arg])
+        return cmd, None  # stdin_text=None (Kimi не использует stdin)
+
+    def parse_output_line(self, line, started_commands):
+        trim = line.strip()
+        if not trim:
+            return []
+
+        if not (trim.startswith("{") and trim.endswith("}")):
+            if re.search(r"\b(error|exception|failed|fatal)\b", trim, flags=re.IGNORECASE):
+                return [{"event": "non_json_error", "text": trim}]
+            elif re.search(r"\bwarn\b", trim, flags=re.IGNORECASE):
+                return [{"event": "non_json_warning", "text": trim}]
+            return []
+
+        try:
+            obj = json.loads(trim)
+        except Exception:
+            return []
+
+        events = []
+        role = obj.get("role")
+
+        if role == "assistant":
+            # Парсим content array
+            for item in (obj.get("content") or []):
+                if item.get("type") == "think" and item.get("think"):
+                    events.append({"event": "reasoning", "text": item["think"]})
+                elif item.get("type") == "text" and item.get("text"):
+                    events.append({"event": "agent_message", "text": item["text"]})
+
+            # Парсим tool_calls
+            for tc in (obj.get("tool_calls") or []):
+                func = tc.get("function", {})
+                tool_id = tc.get("id", "")
+                cmd_name = func.get("name", "")
+                args_str = func.get("arguments", "{}")
+                try:
+                    args = json.loads(args_str)
+                except Exception:
+                    args = {}
+                command = args.get("command", cmd_name)
+                started_commands[tool_id] = True
+                events.append({"event": "command_started", "id": tool_id, "command": command})
+
+        elif role == "tool":
+            tool_call_id = obj.get("tool_call_id", "")
+            content_parts = obj.get("content") or []
+            if isinstance(content_parts, str):
+                content_parts = [{"type": "text", "text": content_parts}]
+            full_text = " ".join(
+                p.get("text", "") for p in content_parts if isinstance(p, dict)
+            )
+            # Определяем exit_code из <system> тега
+            if "<system>Command executed successfully</system>" in full_text:
+                exit_code = 0
+            elif "<system>" in full_text and "failed" in full_text.lower():
+                exit_code = 1
+            else:
+                exit_code = 0
+            # NB: В отличие от CodexRunner, здесь нет полей "command", "status",
+            # "was_started" — у Kimi role:tool не содержит эту информацию.
+            # Потребитель в run_agent() использует .get() с defaults, поэтому безопасно.
+            events.append({
+                "event": "command_completed",
+                "id": tool_call_id,
+                "exit_code": exit_code,
+                "output": full_text,
+            })
+
+        return events
+
+    def extract_session_id(self, lines):
+        return None  # Kimi session ID определяется через filesystem (post_run_hook)
+
+    def extract_agent_messages(self, lines):
+        texts = []
+        for line in lines:
+            stripped = line.strip()
+            if not (stripped.startswith("{") and stripped.endswith("}")):
+                continue
+            try:
+                obj = json.loads(stripped)
+            except Exception:
+                continue
+            if obj.get("role") == "assistant":
+                for item in (obj.get("content") or []):
+                    if item.get("type") == "text" and item.get("text"):
+                        texts.append(item["text"])
+        return texts
+
+    def is_turn_completed(self, line):
+        return False  # Kimi завершает процесс по EOF, нет аналога turn.completed
+
+    def is_session_not_found_error(self, output):
+        return bool(re.search(
+            r"(?i)(session|thread|unknown).*(not found|error|invalid|missing)"
+            r"|not found.*(session|thread)",
+            output,
+        ))
+
+    @property
+    def supports_filesystem_session_detection(self) -> bool:
+        return True
+
+    def pre_run_hook(self) -> None:
+        """Запомнить текущие session UUID для последующей детекции нового."""
+        self._sessions_before = self._snapshot_sessions()
+
+    def post_run_hook(self, lines: list[str]) -> Optional[str]:
+        """Найти новый session UUID через diff файловой системы."""
+        if self._sessions_before is None:
+            return None
+        return self._detect_session_id(self._sessions_before)
+
+    def post_run_cleanup(self) -> None:
+        """Удалить временный файл промпта (если был создан)."""
+        if self._last_temp_file:
+            try:
+                os.unlink(self._last_temp_file)
+            except OSError:
+                pass
+            self._last_temp_file = None
+
+    def _snapshot_sessions(self) -> set[str]:
+        """Собрать все session UUID из всех workspace хешей."""
+        result = set()
+        if not self.KIMI_SESSION_DIR.exists():
+            return result
+        for hash_dir in self.KIMI_SESSION_DIR.iterdir():
+            if hash_dir.is_dir():
+                for session_dir in hash_dir.iterdir():
+                    if session_dir.is_dir():
+                        result.add(session_dir.name)
+        return result
+
+    def _detect_session_id(self, sessions_before: set[str]) -> Optional[str]:
+        """Найти новый session UUID, появившийся после вызова kimi."""
+        sessions_after = self._snapshot_sessions()
+        new_sessions = sessions_after - sessions_before
+        if len(new_sessions) == 1:
+            return new_sessions.pop()
+        if len(new_sessions) > 1:
+            # Несколько новых — вернуть самый свежий по mtime
+            best = None
+            best_mtime = 0.0
+            for sid in new_sessions:
+                for hash_dir in self.KIMI_SESSION_DIR.iterdir():
+                    candidate = hash_dir / sid
+                    if candidate.exists():
+                        mtime = candidate.stat().st_mtime
+                        if mtime > best_mtime:
+                            best_mtime = mtime
+                            best = sid
+            return best
+        # Нет новых сессий — возможно resume существующей.
+        # Найти самую свежую по mtime context.jsonl
+        best = None
+        best_mtime = 0.0
+        for hash_dir in self.KIMI_SESSION_DIR.iterdir():
+            if not hash_dir.is_dir():
+                continue
+            for session_dir in hash_dir.iterdir():
+                ctx = session_dir / "context.jsonl"
+                if ctx.exists():
+                    mtime = ctx.stat().st_mtime
+                    if mtime > best_mtime:
+                        best_mtime = mtime
+                        best = session_dir.name
+        return best
