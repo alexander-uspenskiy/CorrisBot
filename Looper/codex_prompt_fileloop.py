@@ -140,7 +140,13 @@ class LoopRunner:
         try:
             raw = state_path.read_text(encoding="utf-8")
             obj = json.loads(raw)
-            thread_id = obj.get("thread_id")
+            # Per-runner session key: "thread_id_codex" или "thread_id_kimi"
+            runner_key = f"thread_id_{self.runner.runner_name}"
+            thread_id = obj.get(runner_key)
+            # Миграция: если per-runner ключа нет, но есть старый "thread_id" —
+            # считать его за codex (backward compatibility)
+            if thread_id is None and self.runner.runner_name == "codex":
+                thread_id = obj.get("thread_id")
             last_processed_marker = str(
                 obj.get("last_processed_marker") or obj.get("last_processed_timestamp") or ""
             ).strip()
@@ -164,11 +170,22 @@ class LoopRunner:
         self, sender_dir: Path, thread_id: Optional[str], last_processed_marker: str
     ) -> None:
         state_path = sender_dir / "loop_state.json"
-        payload = {
-            "thread_id": thread_id,
-            "last_processed_marker": last_processed_marker,
-            "updated_at": now_str(),
-        }
+        runner_key = f"thread_id_{self.runner.runner_name}"
+
+        # Прочитать существующий state, чтобы сохранить thread_id другого runner'а
+        existing = {}
+        if state_path.exists():
+            try:
+                existing = json.loads(state_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # Обновить только свой ключ, сохранив чужие
+        payload = dict(existing)
+        payload[runner_key] = thread_id
+        payload["last_processed_marker"] = last_processed_marker
+        payload["updated_at"] = now_str()
+
         tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp_path.replace(state_path)
@@ -180,7 +197,11 @@ class LoopRunner:
         try:
             raw = self.legacy_inbox_state_path.read_text(encoding="utf-8")
             obj = json.loads(raw)
-            thread_id = obj.get("thread_id")
+            # Per-runner session key с fallback для backward compatibility
+            runner_key = f"thread_id_{self.runner.runner_name}"
+            thread_id = obj.get(runner_key)
+            if thread_id is None and self.runner.runner_name == "codex":
+                thread_id = obj.get("thread_id")
             sender_last_processed_marker: dict[str, str] = {}
             if isinstance(obj.get("sender_last_processed_marker"), dict):
                 for sender, marker in obj["sender_last_processed_marker"].items():

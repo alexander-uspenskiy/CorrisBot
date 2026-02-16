@@ -10,6 +10,12 @@ from typing import Optional
 class AgentRunner(ABC):
     """Абстрактный интерфейс CLI-агента."""
 
+    @property
+    @abstractmethod
+    def runner_name(self) -> str:
+        """Уникальное имя runner'а для хранения состояния ('codex', 'kimi')."""
+        ...
+
     @abstractmethod
     def resolve_executable(self) -> str:
         """Найти и вернуть путь к исполняемому файлу агента."""
@@ -96,6 +102,10 @@ class AgentRunner(ABC):
 
 
 class CodexRunner(AgentRunner):
+    @property
+    def runner_name(self) -> str:
+        return "codex"
+
     def __init__(
         self,
         codex_bin: Optional[str] = None,
@@ -266,6 +276,10 @@ class CodexRunner(AgentRunner):
 class KimiRunner(AgentRunner):
     KIMI_SESSION_DIR = Path.home() / ".kimi" / "sessions"
     MAX_CMD_LENGTH = 8000  # Windows cmd limit ~8191 chars
+
+    @property
+    def runner_name(self) -> str:
+        return "kimi"
 
     def __init__(self):
         self._executable = self.resolve_executable()
