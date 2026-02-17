@@ -27,12 +27,13 @@
   - Принимай `Reply-To` как источник истины для:
     - `InboxPath` (куда класть prompt-файлы отчетов/вопросов для Talker)
     - `SenderID`
-    - `FilePattern` (если отсутствует — используй дефолт `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`)
+    - `FilePattern` (поддерживается только `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`; если отсутствует — используй этот дефолт)
   - Сохраняй этот маршрут в контексте текущей сессии и используй его для всех последующих сообщений Talker по этому проекту.
   - Не заменяй его на "логически похожие" пути (например, `<PROJECT_ROOT_PATH>\Talker\...`), если Talker явно не прислал обновленный `Reply-To`.
   - Менять маршрут можно только по явному новому `Reply-To` от Talker.
+  - Если `Reply-To.FilePattern` задан и отличается от поддерживаемого, зафиксируй ошибку `unsupported FilePattern` и запроси обновлённый маршрут.
   - Для любой отправки по этому маршруту строго применяй пошаговый алгоритм из `ROLE_LOOPER_BASE`:
-    extract -> ensure/create inbox -> write prompt by `FilePattern` (or default) -> verify file exists (retry once on failure) -> в текущем result только краткий статус.
+    extract -> ensure/create inbox -> write local report -> create prompt via `create_prompt_file.py` -> verify file exists (retry once on failure) -> в текущем result только краткий статус.
 
 ## Delegation Transport Contract (Executor <-> Orchestrator)
 - Межлуперный обмен с Executor делай только через `Prompt_*.md` в inbox; не используй `*_Result.md` как канал "ответа исполнителя".

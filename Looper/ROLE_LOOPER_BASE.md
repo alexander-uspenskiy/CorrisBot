@@ -24,7 +24,9 @@ If a final file is created "just in case" and no path is provided, place it in `
 # Communication channels
 
 - Луперы могут общаться с другими луперами через их каталоги Prompts
-Create a normal prompt file in the target sender inbox (`<LooperFolder>/Prompts/Inbox/<SenderID>/Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`).
+Для создания prompt-файла используй только helper-скрипт:
+`py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
+Не формируй имя `Prompt_*.md` вручную.
 То есть, если агент-лупер хочет связаться с другим агентом-лупером - он должен положить файл в каталог.
 Если каталога нет - создать его.
 - Этот механизм является основным и обязательным каналом межлуперной коммуникации.
@@ -40,10 +42,15 @@ Create a normal prompt file in the target sender inbox (`<LooperFolder>/Prompts/
   - блок не является markdown-примером (не внутри code fence и не цитата);
   - `InboxPath` не плейсхолдер вида `<...>`.
 - Если есть неоднозначность, считать `Reply-To` невалидным и явно зафиксировать проблему маршрутизации вместо молчаливого reroute.
-- Используй значения `Reply-To` как источник истины: `InboxPath` (куда писать), `SenderID` (если задан), `FilePattern` (или дефолт `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`, если не передан).
+- Используй значения `Reply-To` как источник истины: `InboxPath` (куда писать), `SenderID` (если задан), `FilePattern`.
+- Для межлуперного транспорта поддерживается только стандартный pattern:
+  `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md` (допустим суффикс `_suffix`, где `suffix` = `[A-Za-z0-9]+`).
+- Если `Reply-To.FilePattern` отсутствует, используй стандартный pattern.
+- Если `Reply-To.FilePattern` задан и отличается от стандартного pattern, считай маршрут невалидным и зафиксируй ошибку `unsupported FilePattern`.
 - Нельзя подменять путь на "похожий" или "ожидаемый по умолчанию", если явно указан `Reply-To`.
 - Перед отправкой проверь, что `Reply-To.InboxPath` существует; если нет - создай каталог.
 - Ответ/отчет отправляй только новым `Prompt_*.md` в `Reply-To.InboxPath`; не заменяй это сообщением только в своем `*_Result.md`.
+- Для создания `Prompt_*.md` используй helper-скрипт `create_prompt_file.py`; ручная сборка имени запрещена.
 - После записи файла проверь, что файл реально создан. Если проверка не прошла - повтори попытку один раз, потом зафиксируй ошибку.
 - При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
 - Исключение: relay-механизм Talker (`type: relay`) может содержать verbatim payload в Result по правилам `ROLE_TALKER`.

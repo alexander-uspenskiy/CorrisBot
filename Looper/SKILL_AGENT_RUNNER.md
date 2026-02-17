@@ -61,10 +61,12 @@ py -3 codex_prompt_fileloop.py --project-root <path> --agent-path <path> --runne
 
 When an agent looper is no longer needed, stop it via inbox prompt command:
 
-1. Create a normal prompt file in the target sender inbox (`Prompts/Inbox/<SenderID>/Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`).
-2. Set the first non-empty line to exactly:
+1. Create local file with first line `/looper stop` (for example: `Temp\looper_stop.md`).
+2. Publish it to target sender inbox using helper script:
+   `py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "Prompts\Inbox\<SenderID>" --from-file "Temp\looper_stop.md"`
+3. Ensure the first non-empty line is exactly:
    `/looper stop`
-3. Do not add any other command on that first line.
+4. Do not add any other command on that first line.
 
 Behavior:
 - The looper stops at script level (no LLM call for this prompt).

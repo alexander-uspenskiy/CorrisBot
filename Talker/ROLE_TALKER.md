@@ -68,7 +68,8 @@ What it does:
 Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.
 - Передача задач оркестратору делается через файловый prompt в его inbox по общему правилу луперов (см. `C:\CorrisBot\Looper\ROLE_LOOPER_BASE.md`):
   - целевой каталог обычно: `<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker`
-  - файл: `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`
+  - prompt-файл создавай helper-скриптом:
+    - `py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker" --from-file "<LocalPromptFile.md>"`
 - Для отчетов оркестратора в Talker используй проектно-уникальный SenderID (а не просто `Orchestrator`), например:
   - `Orc_<ProjectTag>` (пример: `Orc_TestProject`)
 - `ProjectTag` определяй детерминированно: это имя конечного каталога из `<PROJECT_ROOT_PATH>`.

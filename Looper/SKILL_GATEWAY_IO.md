@@ -19,7 +19,8 @@ When a prompt contains a valid `Reply-To:` block, execute the following steps in
 ### STEP 1: Extract Reply-To data exactly
 - `InboxPath`: copy exactly as provided.
 - `SenderID`: copy exactly as provided (if present).
-- `FilePattern`: if provided, copy exactly; if missing, use default `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`.
+- `FilePattern`: supported value is only `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md` (optional alnum suffix in marker). If missing, use this default.
+- If `FilePattern` is present and differs from supported value, report `unsupported FilePattern` and stop.
 
 ### STEP 2: Prepare destination
 - Verify directory exists: `<InboxPath>`.
@@ -27,9 +28,10 @@ When a prompt contains a valid `Reply-To:` block, execute the following steps in
 - If creation fails: report delivery error in current turn and stop.
 
 ### STEP 3: Create response file
-- Generate a filename that matches `FilePattern` (or default pattern when missing) with current timestamp.
-- Full path must be: `<InboxPath>\<Filename>`.
-- Write the complete response/report to this file.
+- Save response/report text to a local temporary file first.
+- Create destination prompt via helper script (do not handcraft filename):
+  - `py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "<InboxPath>" --from-file "<LocalReportFile.md>"`
+- Script output path is the final `<InboxPath>\<Filename>` in standard supported pattern.
 
 ### STEP 4: Verify delivery
 - Confirm the file exists after writing.
@@ -45,6 +47,7 @@ When a prompt contains a valid `Reply-To:` block, execute the following steps in
 
 - `Reply-To` handling has no optional mode: if it is present, it is mandatory.
 - Do not use `*_Result.md` as межлуперный транспорт вместо prompt-файла.
+- Do not handcraft `Prompt_*.md` filenames in tool calls (`WriteFile`, `echo > ...`, etc.); use `create_prompt_file.py`.
 - Do not include `@user`/mentions in files sent through `Reply-To` unless explicitly requested.
 - Keep sender isolation: each sender must use its own isolated inbox subdirectory/context.
 
