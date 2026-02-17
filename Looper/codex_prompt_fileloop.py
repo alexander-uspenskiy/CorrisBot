@@ -674,8 +674,6 @@ class LoopRunner:
                 except Exception as e:
                     self.write_console_line(f"[error] Failed to process reset signal: {e}", "red")
 
-        check_reset_signal()
-
         for sender_dir in self.get_sender_dirs():
             sender_id = sender_dir.name
             state_thread_id, last_processed_marker, updated_at = self.read_sender_state(sender_dir)
@@ -687,8 +685,12 @@ class LoopRunner:
         legacy_thread_id, legacy_last_marker_map = self.read_legacy_inbox_state()
         for sender_id, marker in legacy_last_marker_map.items():
             sender_last_processed_marker.setdefault(sender_id, marker)
+
         if (not thread_id) and legacy_thread_id:
             thread_id = legacy_thread_id
+
+        # Check signal AFTER loading state to ensure reset overrides stale disk state
+        check_reset_signal()
 
         waiting_logged = False
 
