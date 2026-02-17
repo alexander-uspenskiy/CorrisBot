@@ -29,7 +29,7 @@ StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Executors\Executor_001 --
 
 ## Config
 Layout config path:
-- `Plans\loops.wt.json`
+- `C:\CorrisBot\loops.wt.json`
 
 Current keys:
 - `window_name_template` (supports `{project}`)

@@ -10,7 +10,7 @@ Goal: reusable file-based looper for multi-agent platform (Orchestrator / Execut
 - WT production launcher (current):
   - `StartLoopsInWT.bat`
   - `StartLoopsInWT.py`
-- WT layout config: `Plans/loops.wt.json`
+- WT layout config: `C:\CorrisBot\loops.wt.json`
 - WT usage doc: `Plans/WT_LAUNCHER_USAGE.md`
 
 ## Key Design Already Implemented
@@ -77,7 +77,7 @@ Accepted assumptions from user:
 - `codex_prompt_fileloop.py` (main target)
 - `Plans/WT_MIGRATION_PLAN.md` (historical design notes)
 - `Plans/WT_LAUNCHER_USAGE.md` (already updated)
-- `Plans/loops.wt.json`
+- `C:\CorrisBot\loops.wt.json`
 
 ## Recent Commits
 - `c867193` Switch WT launcher to one-agent dynamic allocation and add WT orchestrator shortcut

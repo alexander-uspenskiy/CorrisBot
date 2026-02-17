@@ -8,7 +8,7 @@ set "WORKDIR=C:\CorrisBot\Gateways\Telegram"
 set "WT_WINDOW=CorrisBot"
 
 rem Read runner from loops.wt.json (default: codex)
-for /f "delims=" %%R in ('py -3 -c "import json,pathlib; c=json.loads(pathlib.Path(r'%LOOPER_ROOT%\Plans\loops.wt.json').read_text()); print(c.get('runner','codex'))"') do set "RUNNER=%%R"
+for /f "delims=" %%R in ('py -3 -c "import json,pathlib; c=json.loads(pathlib.Path(r'%LOOPER_ROOT%\..\loops.wt.json').read_text()); print(c.get('runner','codex'))"') do set "RUNNER=%%R"
 if not "%RUNNER%"=="kimi" set "RUNNER=codex"
 
 rem Determine loop bat file based on runner

@@ -383,7 +383,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("agent_path", help="Agent path relative to project root (for example, Executors\\Executor_001).")
     parser.add_argument(
         "--config-path",
-        default=str(SCRIPT_DIR / "Plans" / "loops.wt.json"),
+        default=str(SCRIPT_DIR.parent / "loops.wt.json"),
         help="Path to WT layout config file.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print command without launching WT.")

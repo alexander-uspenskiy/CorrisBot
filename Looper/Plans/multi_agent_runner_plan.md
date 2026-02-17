@@ -1053,7 +1053,7 @@ git commit -m "feat: add KimiLoop.bat and runner selection in startup chain"
 По умолчанию используется Codex CLI. Для запуска лупера с Kimi Code CLI:
 
 **Вручную:**
-`C:\CorrisBot\Looper\KimiLoop.bat "<ProjectPath>" "Executors/Executor_002"`
+`Looper\KimiLoop.bat "<ProjectPath>" "Executors/Executor_002"`
 
 **Через Windows Terminal (`loops.wt.json`):**
 Добавить поле `"runner": "kimi"` для нужного агента в массиве `agents`.
