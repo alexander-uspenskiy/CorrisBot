@@ -863,9 +863,15 @@ class LoopRunner:
         # Write relay content with error handling
         try:
             relay_path.write_text(
-                f"# Relay Result\n\n{relay_content}\n\nFinished: {now_str()}\n",
-                encoding="utf-8"
+                (
+                    f"<!-- runner: {self.runner.runner_name} -->\n"
+                    "# Relay Result\n\n"
+                    f"Started: {now_str()}\n\n"
+                ),
+                encoding="utf-8",
             )
+            self.append_gateway_agent_message(relay_path, relay_content)
+            self.append_text(relay_path, f"\nFinished: {now_str()}\n")
             self.write_console_line(f"[relay] Delivered to {validated_target}: {filename}")
         except OSError as e:
             self.write_console_line(f"[relay] ERROR: Failed to write relay file to {validated_target}: {e}", "red")

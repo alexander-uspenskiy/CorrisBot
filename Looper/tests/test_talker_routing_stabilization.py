@@ -174,7 +174,25 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             relay_files = list_relay_files(runner.inbox_root, target)
             self.assertEqual(1, len(relay_files))
             self.assertTrue(target_dir.exists())
-            self.assertIn("relay payload", relay_files[0].read_text(encoding="utf-8"))
+            relay_text = relay_files[0].read_text(encoding="utf-8")
+            self.assertIn("relay payload", relay_text)
+            self.assertIn('"type": "item.completed"', relay_text)
+            self.assertIn('"type": "agent_message"', relay_text)
+
+    def test_unit_valid_target_creates_kimi_compatible_relay_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runner = self.create_runner(Path(temp_dir), runner_kind="kimi")
+            target = "tg_corriscant"
+
+            runner.handle_relay_delivery(target, "relay payload", user_sender_id=target)
+
+            relay_files = list_relay_files(runner.inbox_root, target)
+            self.assertEqual(1, len(relay_files))
+            relay_text = relay_files[0].read_text(encoding="utf-8")
+            self.assertIn('<!-- runner: kimi -->', relay_text)
+            self.assertIn('"role": "assistant"', relay_text)
+            self.assertIn('"type": "text"', relay_text)
+            self.assertIn("relay payload", relay_text)
 
     def test_unit_reset_signal_clears_routing_state(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
