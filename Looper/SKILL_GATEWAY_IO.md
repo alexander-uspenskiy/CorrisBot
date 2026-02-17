@@ -43,6 +43,15 @@ When a prompt contains a valid `Reply-To:` block, execute the following steps in
 - Do not repeat the full delivered payload in current chat/result text.
 - Exception: Talker relay YAML flow (`type: relay`) may keep verbatim relay payload in Result as required by `ROLE_TALKER`.
 
+## REPLY-TO PERSISTENCE CONTRACT (MANDATORY)
+
+- The first valid `Reply-To` block in a project/session establishes the active delivery contract for this peer.
+- Active contract fields are: `InboxPath`, `SenderID` (if provided), and `FilePattern`.
+- This contract remains in force for all subsequent prompts in the same peer/project context until a newer valid `Reply-To` block explicitly updates it.
+- If a later prompt has no `Reply-To` block but an active contract exists, deliver using the active contract; do not switch to result-only replies.
+- If a later prompt has no `Reply-To` block and no active contract is known, report explicit routing error and request a valid route instead of silent fallback.
+- `Reply-To` persistence is mandatory for both reports and clarification questions sent back to the upstream looper.
+
 ## CRITICAL CONSTRAINTS
 
 - `Reply-To` handling has no optional mode: if it is present, it is mandatory.
