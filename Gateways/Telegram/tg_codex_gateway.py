@@ -1415,8 +1415,10 @@ def _reset_sender_dir(sender_id: str) -> int:
   return removed
 
 def _reset_all_sender_dirs() -> Tuple[int, int]:
+  import sys
   _validate_reset_scope()
   _ensure_talker_paths()
+  print(f"[RESET DEBUG] _TALKER_INBOX_ROOT={_TALKER_INBOX_ROOT}", file=sys.stderr)
   with _DELIVERY_STATE_LOCK:
     _bump_state_epoch()
     _forget_all_delivery_state()
@@ -1427,10 +1429,27 @@ def _reset_all_sender_dirs() -> Tuple[int, int]:
   removed_files = 0
   for name in os.listdir(_TALKER_INBOX_ROOT):
     path = os.path.join(_TALKER_INBOX_ROOT, name)
+    print(f"[RESET DEBUG] Checking: {name} -> {path} (is_dir={os.path.isdir(path)})", file=sys.stderr)
     if not os.path.isdir(path):
       continue
     sender_count += 1
-    removed_files += _clear_sender_artifacts(path)
+    try:
+      removed = _clear_sender_artifacts(path)
+      print(f"[RESET DEBUG] Removed {removed} files from {name}", file=sys.stderr)
+      removed_files += removed
+    except Exception as e:
+      print(f"[RESET DEBUG] ERROR in {name}: {e}", file=sys.stderr)
+  print(f"[RESET DEBUG] Total: {sender_count} senders, {removed_files} files removed", file=sys.stderr)
+
+  # Create reset signal for Looper to clear in-memory state
+  try:
+    signal_path = os.path.join(_TALKER_INBOX_ROOT, "reset_signal.json")
+    with open(signal_path, "w", encoding="utf-8") as f:
+      json.dump({"timestamp": _delivery_now_str(), "action": "reset_all"}, f)
+    print(f"[RESET DEBUG] Created reset signal at {signal_path}", file=sys.stderr)
+  except Exception as e:
+    print(f"[RESET DEBUG] Failed to create reset signal: {e}", file=sys.stderr)
+
   return sender_count, removed_files
 
 async def _submit_prompt(update: Update, prompt: str, source: str) -> Optional[str]:

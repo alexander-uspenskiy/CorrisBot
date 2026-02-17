@@ -656,6 +656,26 @@ class LoopRunner:
         thread_id: Optional[str] = None
         best_thread_updated_at = ""
 
+        # --- Signal File Check Helper ---
+        def check_reset_signal():
+            signal_path = self.inbox_root / "reset_signal.json"
+            if signal_path.exists():
+                try:
+                    self.write_console_line("[info] Reset signal detected. Clearing session state.", "yellow")
+                    # Clear in-memory state
+                    nonlocal thread_id, sender_last_processed_marker
+                    thread_id = None
+                    sender_last_processed_marker.clear()
+                    # Remove the signal file
+                    try:
+                        signal_path.unlink()
+                    except Exception:
+                        pass
+                except Exception as e:
+                    self.write_console_line(f"[error] Failed to process reset signal: {e}", "red")
+
+        check_reset_signal()
+
         for sender_dir in self.get_sender_dirs():
             sender_id = sender_dir.name
             state_thread_id, last_processed_marker, updated_at = self.read_sender_state(sender_dir)
@@ -673,6 +693,7 @@ class LoopRunner:
         waiting_logged = False
 
         while True:
+            check_reset_signal()
             picked = self.pick_next_prompt(sender_last_processed_marker)
             if picked is None:
                 if not waiting_logged:
