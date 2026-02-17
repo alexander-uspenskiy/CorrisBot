@@ -37,11 +37,12 @@
 #   /toggleconsole      -> toggle between quiet and full console mode
 #   /show_reasoning     -> show/hide [reasoning] stream (on|off)
 #   /show_commands      -> show/hide [command] stream (on|off)
+#   /routing ...        -> pass routing control command to Talker
 #   /help               -> list all available bot commands
 #
 # SECURITY:
 #   Only ALLOWED_CHAT_ID can run agent commands (plain text forwarding,
-#   /setagent, /reset*).
+#   /setagent, /reset*, /routing).
 #   /id is allowed for everyone (so you can discover chat_id), but is still echoed to console.
 
 import os
@@ -1754,6 +1755,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /toggleconsole - toggle console mode
 /show_reasoning on|off - enable/disable reasoning relay
 /show_commands on|off - enable/disable command relay
+/routing show|clear|set-user <SenderID> - pass routing command to Talker
 /help - show this help
 
 Notes:
@@ -1835,6 +1837,26 @@ async def cmd_show_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
   _SHOW_COMMANDS = value
   await update.message.reply_text(f"OK. show_commands = {_SHOW_COMMANDS}")
 
+async def cmd_routing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  _echo_console(update)
+
+  # Hard requirement: check chat permission before routing command processing.
+  if not _is_allowed(update):
+    await update.message.reply_text("Access denied.")
+    return
+
+  args_text = " ".join(context.args).strip()
+  if not args_text:
+    await update.message.reply_text(
+      "Usage: /routing show | /routing clear | /routing set-user <SenderID>"
+    )
+    return
+
+  routing_prompt = f"/routing {args_text}"
+  marker = await _submit_prompt(update, routing_prompt, source="command:routing")
+  if marker:
+    await update.message.reply_text(f"Routing command submitted: {routing_prompt}")
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
   # Any non-command text is treated as a prompt for the current agent.
   _echo_console(update)
@@ -1896,6 +1918,7 @@ def main():
   app.add_handler(CommandHandler("toggleconsole", cmd_toggleconsole))
   app.add_handler(CommandHandler("show_reasoning", cmd_show_reasoning))
   app.add_handler(CommandHandler("show_commands", cmd_show_commands))
+  app.add_handler(CommandHandler("routing", cmd_routing))
 
   # Any attachment (non-command) => save under sender Files directory
   app.add_handler(

@@ -51,6 +51,22 @@ When a prompt contains a valid `Reply-To:` block, execute the following steps in
 - Do not include `@user`/mentions in files sent through `Reply-To` unless explicitly requested.
 - Keep sender isolation: each sender must use its own isolated inbox subdirectory/context.
 
+## Talker Relay Routing (Single-User Mode)
+
+- This section applies to Talker looper runtime only.
+- Relay destination source of truth is `Talker/Prompts/Inbox/routing_state.json` field `user_sender_id`.
+- Talker relay delivery is allowed only when both conditions are true:
+  - `user_sender_id` is set.
+  - relay YAML `target` equals `user_sender_id`.
+- If `user_sender_id` is unset or `target` mismatches:
+  - log explicit protocol error;
+  - do not deliver relay.
+- Do not use heuristic routing, fallback targets, or auto-switch behavior.
+- Operator control commands:
+  - `/routing show`
+  - `/routing set-user <SenderID>`
+  - `/routing clear`
+
 ## Incoming User Files
 - Gateway saves user-uploaded files into:
   - `Prompts/Inbox/<sender_id>/Files/`

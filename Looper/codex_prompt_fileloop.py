@@ -3,7 +3,6 @@ import ctypes
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -60,13 +59,16 @@ class LoopRunner:
         executor_dir: Path,
         inbox_root: Path,
         runner: AgentRunner,
+        is_talker_context: bool = False,
     ) -> None:
         self.executor_dir = executor_dir
         self.inbox_root = inbox_root
         self.runner = runner
         self.inbox_root.mkdir(parents=True, exist_ok=True)
         self.legacy_inbox_state_path = self.inbox_root / "loop_state.json"
+        self.routing_state_path = self.inbox_root / "routing_state.json"
         self.console_log_path = self.inbox_root / "Console.log"
+        self.is_talker_context = is_talker_context
         self.ansi_enabled = self._try_enable_ansi()
         self.warned_invalid_prompt_paths: set[str] = set()
         self.warned_invalid_watermark_senders: set[str] = set()
@@ -224,6 +226,43 @@ class LoopRunner:
             )
             return None, {}
 
+    def read_routing_state(self) -> tuple[str, str, str]:
+        if not self.routing_state_path.exists():
+            return "", "", ""
+
+        try:
+            raw = self.routing_state_path.read_text(encoding="utf-8")
+            obj = json.loads(raw)
+            user_sender_id = str(obj.get("user_sender_id") or "").strip()
+            updated_at = str(obj.get("updated_at") or "")
+            updated_by = str(obj.get("updated_by") or "")
+            return user_sender_id, updated_at, updated_by
+        except Exception:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            corrupt_path = self.inbox_root / f"routing_state.corrupt.{stamp}.json"
+            try:
+                self.routing_state_path.replace(corrupt_path)
+            except Exception:
+                pass
+            self.write_console_line(
+                f"[warning] Routing state is invalid JSON. Moved to '{corrupt_path}'. Starting with empty routing state.",
+                "darkgray",
+            )
+            return "", "", ""
+
+    def write_routing_state(self, user_sender_id: str, updated_by: str) -> None:
+        normalized_updated_by = updated_by.strip()
+        if normalized_updated_by not in {"bootstrap", "operator_command", "reset"}:
+            raise ValueError(f"invalid updated_by for routing state: {updated_by!r}")
+        payload = {
+            "user_sender_id": user_sender_id.strip(),
+            "updated_at": now_str(),
+            "updated_by": normalized_updated_by,
+        }
+        tmp_path = self.routing_state_path.with_suffix(self.routing_state_path.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp_path.replace(self.routing_state_path)
+
     def wait_for_file_ready(self, file_path: Path) -> None:
         stable_rounds = 0
         last_size = -1
@@ -257,23 +296,40 @@ class LoopRunner:
 
             last_size = current_size
 
-    @staticmethod
-    def build_loop_prompt(user_prompt: str, sender_id: str) -> str:
+    @classmethod
+    def build_loop_prompt(
+        cls,
+        user_prompt: str,
+        sender_id: str,
+        user_sender_id: str,
+        is_talker_context: bool,
+    ) -> str:
         # Core looper policy rules are centralized in each agent's AGENTS.md Read chain.
         # Keep only runtime execution
         # constraints in this injected prompt to avoid duplicate sources of truth.
+        routing_rules = ""
+        routing_context = ""
+        if is_talker_context:
+            fixed_user_sender = user_sender_id or "(not set)"
+            routing_rules = (
+                "- Talker relay contract: use `Fixed User Sender ID` as relay target exactly.\n"
+                "- If `Fixed User Sender ID` is unknown, report routing protocol error explicitly; never guess.\n"
+            )
+            routing_context = f"Fixed User Sender ID: {fixed_user_sender}\n\n"
         rules = (
             "Loop execution rules (strict):\n"
-            "- Process exactly one user prompt from this iteration.\n"
+            "- Process exactly one incoming prompt from this iteration.\n"
             "- For app launch/close tasks, execute action immediately, then do a quick verification.\n"
             "- If quick verification is negative or uncertain, wait at least 5 seconds and verify again before concluding failure.\n"
             "- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.\n"
             "- For inter-looper messaging, create Prompt_*.md only via helper script: "
             "`py C:\\CorrisBot\\Looper\\create_prompt_file.py create --inbox \"<InboxPath>\" --from-file \"<LocalReportFile.md>\"`.\n"
             "- Do not handcraft Prompt_*.md filenames in WriteFile/Shell commands.\n"
+            f"{routing_rules}"
             "- Do not use internet/network resources (no web access, no API calls, no downloads).\n\n"
             f"Sender ID: {sender_id}\n\n"
-            "User prompt:\n"
+            f"{routing_context}"
+            "Incoming prompt:\n"
         )
         return f"{rules}\n{user_prompt}"
 
@@ -414,17 +470,107 @@ class LoopRunner:
             f.write(with_debug_timestamps(text))
 
     @staticmethod
-    def parse_control_command(user_prompt_text: str) -> Optional[str]:
+    def get_first_nonempty_line(user_prompt_text: str) -> Optional[str]:
         for raw_line in user_prompt_text.splitlines():
             # Tolerate UTF-8 BOM from some writers without modifying prompt text for LLM.
             line = raw_line.lstrip("\ufeff").strip()
             if not line:
                 continue
-            normalized = " ".join(line.lower().split())
-            if normalized in {"/looper stop", "/loop stop"}:
-                return "stop"
-            return None
+            return line
         return None
+
+    @classmethod
+    def parse_stop_command(cls, user_prompt_text: str) -> Optional[str]:
+        line = cls.get_first_nonempty_line(user_prompt_text)
+        if line is None:
+            return None
+        normalized = " ".join(line.lower().split())
+        if normalized in {"/looper stop", "/loop stop"}:
+            return "stop"
+        return None
+
+    @classmethod
+    def parse_routing_command(cls, user_prompt_text: str) -> Optional[tuple[str, str]]:
+        line = cls.get_first_nonempty_line(user_prompt_text)
+        if line is None:
+            return None
+
+        normalized = " ".join(line.split())
+        lowered = normalized.lower()
+        if lowered == "/routing show":
+            return "show", ""
+        if lowered == "/routing clear":
+            return "clear", ""
+
+        match = re.fullmatch(r"/routing\s+set-user(?:\s+(.*))?", normalized, flags=re.IGNORECASE)
+        if match:
+            return "set_user", (match.group(1) or "").strip()
+        return None
+
+    def handle_routing_command(
+        self,
+        command_name: str,
+        command_arg: str,
+        result_path: Path,
+        user_sender_id: str,
+        routing_updated_at: str,
+        routing_updated_by: str,
+    ) -> tuple[str, str, str]:
+        if command_name == "show":
+            self.append_text(
+                result_path,
+                (
+                    "Routing state\n"
+                    f"- user_sender_id: {user_sender_id or '(unset)'}\n"
+                    f"- updated_at: {routing_updated_at or '(never)'}\n"
+                    f"- updated_by: {routing_updated_by or '(unknown)'}\n"
+                ),
+            )
+            self.write_console_line(
+                f"[routing] show user_sender_id='{user_sender_id or ''}' updated_by='{routing_updated_by or ''}'",
+                "darkyellow",
+            )
+            return user_sender_id, routing_updated_at, routing_updated_by
+
+        if command_name == "clear":
+            self.write_routing_state("", "operator_command")
+            self.append_text(
+                result_path,
+                "Routing state updated\n- user_sender_id: (unset)\n- updated_by: operator_command\n",
+            )
+            self.write_console_line("[routing] user_sender_id cleared by operator command", "yellow")
+            return "", now_str(), "operator_command"
+
+        if command_name == "set_user":
+            if not command_arg or not self._is_valid_target_name(command_arg):
+                self.append_text(
+                    result_path,
+                    f"[routing] protocol error: invalid user_sender_id '{command_arg}'.\n",
+                )
+                self.write_console_line(
+                    f"[routing] protocol error: invalid user_sender_id '{command_arg}'",
+                    "red",
+                )
+                return user_sender_id, routing_updated_at, routing_updated_by
+
+            self.write_routing_state(command_arg, "operator_command")
+            self.append_text(
+                result_path,
+                (
+                    "Routing state updated\n"
+                    f"- user_sender_id: {command_arg}\n"
+                    "- updated_by: operator_command\n"
+                ),
+            )
+            self.write_console_line(
+                f"[routing] user_sender_id set to '{command_arg}' by operator command",
+                "yellow",
+            )
+            return command_arg, now_str(), "operator_command"
+
+        self.append_text(result_path, f"[routing] protocol error: unsupported command '{command_name}'.\n")
+        self.write_console_line(f"[routing] protocol error: unsupported command '{command_name}'", "red")
+        return user_sender_id, routing_updated_at, routing_updated_by
 
     def warn_invalid_prompt_once(self, prompt_path: Path) -> None:
         warning_key = str(prompt_path).lower()
@@ -621,20 +767,52 @@ class LoopRunner:
         if not target.strip():
             return False
         return True
+
+    def validate_relay_target(
+        self,
+        target: str,
+        user_sender_id: str,
+    ) -> Optional[str]:
+        """Validate relay target and enforce Talker routing contract."""
+        normalized = target.strip()
+        if not self._is_valid_target_name(normalized):
+            self.write_console_line(f"[relay] protocol error: invalid target name '{target}'.", "red")
+            return None
+
+        if not self.is_talker_context:
+            return normalized
+
+        if not user_sender_id:
+            self.write_console_line(
+                "[relay] protocol error: user_sender_id is unset. Relay delivery blocked.",
+                "red",
+            )
+            return None
+        if normalized != user_sender_id:
+            self.write_console_line(
+                f"[relay] protocol error: target mismatch. got='{normalized}', expected='{user_sender_id}'. Relay delivery blocked.",
+                "red",
+            )
+            return None
+        return normalized
     
-    def handle_relay_delivery(self, target: str, relay_content: str) -> None:
+    def handle_relay_delivery(
+        self,
+        target: str,
+        relay_content: str,
+        user_sender_id: str,
+    ) -> None:
         """Create relay Result file in target inbox.
         
         Creates a file named Prompt_<timestamp>_relay_Result.md in the target inbox.
         The _relay suffix allows Gateway to identify it while Looper ignores it
         (Looper skips files ending with _Result.md).
         """
-        # Validate target to prevent directory traversal
-        if not self._is_valid_target_name(target):
-            self.write_console_line(f"[relay] ERROR: Invalid target name '{target}'", "red")
+        validated_target = self.validate_relay_target(target, user_sender_id)
+        if not validated_target:
             return
         
-        target_inbox = self.inbox_root / target
+        target_inbox = self.inbox_root / validated_target
         target_inbox.mkdir(parents=True, exist_ok=True)
         
         # Generate filename: Prompt_<timestamp>_relay_Result.md
@@ -649,15 +827,32 @@ class LoopRunner:
                 f"# Relay Result\n\n{relay_content}\n\nFinished: {now_str()}\n",
                 encoding="utf-8"
             )
-            self.write_console_line(f"[relay] Delivered to {target}: {filename}")
+            self.write_console_line(f"[relay] Delivered to {validated_target}: {filename}")
         except OSError as e:
-            self.write_console_line(f"[relay] ERROR: Failed to write relay file to {target}: {e}", "red")
+            self.write_console_line(f"[relay] ERROR: Failed to write relay file to {validated_target}: {e}", "red")
     
     def run_forever(self) -> None:
         self.write_console_line(f"Watching inbox root: {self.inbox_root}")
         sender_last_processed_marker: dict[str, str] = {}
         thread_id: Optional[str] = None
         best_thread_updated_at = ""
+        user_sender_id = ""
+        routing_updated_at = ""
+        routing_updated_by = ""
+        if self.is_talker_context:
+            if not self.routing_state_path.exists():
+                self.write_routing_state("", "bootstrap")
+            user_sender_id, routing_updated_at, routing_updated_by = self.read_routing_state()
+            if user_sender_id:
+                self.write_console_line(
+                    f"[routing] Loaded user_sender_id: '{user_sender_id}'",
+                    "darkyellow",
+                )
+            else:
+                self.write_console_line(
+                    "[routing] user_sender_id is not set. Relay delivery is blocked until `/routing set-user <SenderID>`.",
+                    "darkyellow",
+                )
 
         # --- Signal File Check Helper ---
         def check_reset_signal():
@@ -666,9 +861,14 @@ class LoopRunner:
                 try:
                     self.write_console_line("[info] Reset signal detected. Clearing session state.", "yellow")
                     # Clear in-memory state
-                    nonlocal thread_id, sender_last_processed_marker
+                    nonlocal thread_id, sender_last_processed_marker, user_sender_id, routing_updated_at, routing_updated_by
                     thread_id = None
                     sender_last_processed_marker.clear()
+                    if self.is_talker_context:
+                        user_sender_id = ""
+                        self.write_routing_state("", "reset")
+                        routing_updated_at = now_str()
+                        routing_updated_by = "reset"
                     # Remove the signal file
                     try:
                         signal_path.unlink()
@@ -727,8 +927,8 @@ class LoopRunner:
             self.append_result_header(result_path, prompt_name)
 
             user_prompt_text = prompt_path.read_text(encoding="utf-8")
-            control_command = self.parse_control_command(user_prompt_text)
-            if control_command == "stop":
+            stop_command = self.parse_stop_command(user_prompt_text)
+            if stop_command == "stop":
                 self.append_text(
                     result_path,
                     (
@@ -745,7 +945,29 @@ class LoopRunner:
                 )
                 return
 
-            prompt_text = self.build_loop_prompt(user_prompt_text, sender_id)
+            if self.is_talker_context:
+                routing_command = self.parse_routing_command(user_prompt_text)
+                if routing_command is not None:
+                    command_name, command_arg = routing_command
+                    user_sender_id, routing_updated_at, routing_updated_by = self.handle_routing_command(
+                        command_name=command_name,
+                        command_arg=command_arg,
+                        result_path=result_path,
+                        user_sender_id=user_sender_id,
+                        routing_updated_at=routing_updated_at,
+                        routing_updated_by=routing_updated_by,
+                    )
+                    self.append_text(result_path, f"\nFinished: {now_str()}\n")
+                    sender_last_processed_marker[sender_id] = marker
+                    self.write_sender_state(sender_dir, thread_id, marker)
+                    continue
+
+            prompt_text = self.build_loop_prompt(
+                user_prompt_text,
+                sender_id,
+                user_sender_id,
+                self.is_talker_context,
+            )
             used_resume = bool(thread_id and thread_id.strip())
 
             lines, exit_code, detected_session_id = self.run_agent(prompt_text, thread_id if used_resume else None, result_path)
@@ -785,7 +1007,7 @@ class LoopRunner:
             relay_result = self.detect_relay_block(result_path)
             if relay_result is not None:
                 relay_target, relay_content = relay_result
-                self.handle_relay_delivery(relay_target, relay_content)
+                self.handle_relay_delivery(relay_target, relay_content, user_sender_id)
 
             self.append_text(result_path, f"\nFinished: {now_str()}\n")
 
@@ -845,6 +1067,11 @@ def parse_args() -> argparse.Namespace:
         choices=["codex", "kimi"],
         help="CLI agent backend to use (default: codex).",
     )
+    parser.add_argument(
+        "--talker-routing",
+        action="store_true",
+        help="Enable Talker-only routing_state/user_sender_id relay contract for this loop.",
+    )
     return parser.parse_args()
 
 
@@ -867,6 +1094,10 @@ def main() -> int:
 
     if not agent_dir.exists():
         raise RuntimeError(f"Agent directory not found: {agent_dir}")
+    if (agent_dir / "ROLE_TALKER.md").exists() and not args.talker_routing:
+        raise RuntimeError(
+            "ROLE_TALKER agent requires '--talker-routing' flag for strict routing contract."
+        )
 
     if args.runner == "codex":
         runner = CodexRunner(
@@ -887,6 +1118,7 @@ def main() -> int:
         executor_dir=agent_dir,
         inbox_root=inbox_root,
         runner=runner,
+        is_talker_context=bool(args.talker_routing),
     )
     loop_runner.run_forever()
     return 0
