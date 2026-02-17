@@ -2,6 +2,52 @@
 
 Rules for agent communication with users through Gateway (file exchange and response formatting).
 
+## VALID REPLY-TO BLOCK SIGNATURE (ANTI-FALSE-ROUTING)
+
+Treat `Reply-To` as an active routing contract only when ALL conditions are true:
+- There is a standalone line exactly `Reply-To:` (not inline text, not quoted example).
+- In the same Reply-To block, there is at least one list item with key `- InboxPath:` (field order is not fixed).
+- `InboxPath` value is concrete (not placeholders like `<...>`).
+- The block is operational prompt content, not markdown code-fence example.
+
+If any condition fails, treat `Reply-To` as non-operational text/example and do not reroute output.
+
+## MANDATORY REPLY-TO HANDLING - STEPS TO FOLLOW
+
+When a prompt contains a valid `Reply-To:` block, execute the following steps in order:
+
+### STEP 1: Extract Reply-To data exactly
+- `InboxPath`: copy exactly as provided.
+- `SenderID`: copy exactly as provided (if present).
+- `FilePattern`: if provided, copy exactly; if missing, use default `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`.
+
+### STEP 2: Prepare destination
+- Verify directory exists: `<InboxPath>`.
+- If directory does not exist: create it immediately.
+- If creation fails: report delivery error in current turn and stop.
+
+### STEP 3: Create response file
+- Generate a filename that matches `FilePattern` (or default pattern when missing) with current timestamp.
+- Full path must be: `<InboxPath>\<Filename>`.
+- Write the complete response/report to this file.
+
+### STEP 4: Verify delivery
+- Confirm the file exists after writing.
+- If verification fails: retry once, then report error.
+
+### STEP 5: Do not duplicate full response in current chat/result
+- When `Reply-To` is present, delivery target is the file in `InboxPath`.
+- In the current turn output, keep only a short confirmation/status (or explicit delivery error).
+- Do not repeat the full delivered payload in current chat/result text.
+- Exception: Talker relay YAML flow (`type: relay`) may keep verbatim relay payload in Result as required by `ROLE_TALKER`.
+
+## CRITICAL CONSTRAINTS
+
+- `Reply-To` handling has no optional mode: if it is present, it is mandatory.
+- Do not use `*_Result.md` as межлуперный транспорт вместо prompt-файла.
+- Do not include `@user`/mentions in files sent through `Reply-To` unless explicitly requested.
+- Keep sender isolation: each sender must use its own isolated inbox subdirectory/context.
+
 ## Incoming User Files
 - Gateway saves user-uploaded files into:
   - `Prompts/Inbox/<sender_id>/Files/`

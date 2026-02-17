@@ -15,6 +15,9 @@
 - Если в задаче есть `Reply-To`:
   - используй именно `Reply-To.InboxPath` как целевой каталог;
   - соблюдай `Reply-To.SenderID`, если он задан как часть контракта.
+  - `Reply-To.FilePattern` используй как шаблон имени файла; если поле отсутствует, используй дефолт `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`.
+  - строго соблюдай пошаговый алгоритм `Reply-To` из `ROLE_LOOPER_BASE`:
+    extract -> ensure/create inbox -> write prompt by `FilePattern` (or default) -> verify file exists (retry once) -> в текущем result только краткий статус доставки.
 - Если `Reply-To` отсутствует, отправь отчет в стандартный Orchestrator inbox с корректным SenderID из входящего prompt и явно зафиксируй используемый маршрут.
 
 ## Completion Rule

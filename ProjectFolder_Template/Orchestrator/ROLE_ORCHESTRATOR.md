@@ -27,10 +27,12 @@
   - Принимай `Reply-To` как источник истины для:
     - `InboxPath` (куда класть prompt-файлы отчетов/вопросов для Talker)
     - `SenderID`
-    - `FilePattern`
+    - `FilePattern` (если отсутствует — используй дефолт `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`)
   - Сохраняй этот маршрут в контексте текущей сессии и используй его для всех последующих сообщений Talker по этому проекту.
   - Не заменяй его на "логически похожие" пути (например, `<PROJECT_ROOT_PATH>\Talker\...`), если Talker явно не прислал обновленный `Reply-To`.
   - Менять маршрут можно только по явному новому `Reply-To` от Talker.
+  - Для любой отправки по этому маршруту строго применяй пошаговый алгоритм из `ROLE_LOOPER_BASE`:
+    extract -> ensure/create inbox -> write prompt by `FilePattern` (or default) -> verify file exists (retry once on failure) -> в текущем result только краткий статус.
 
 ## Delegation Transport Contract (Executor <-> Orchestrator)
 - Межлуперный обмен с Executor делай только через `Prompt_*.md` в inbox; не используй `*_Result.md` как канал "ответа исполнителя".
@@ -38,6 +40,7 @@
   - `Reply-To:`
   - `- InboxPath: <...Orchestrator\\Prompts\\Inbox\\<ExecutorSenderFolder>>`
   - `- SenderID: <SenderID оркестратора для этого Executor>`
+  - `- FilePattern: Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`
 - По завершению делегирования (или при вопросе) ожидаемый ответ Executor-а должен приходить новым prompt-файлом в указанный `Reply-To`.
 - Нельзя строить протокол на поллинге `Executor/.../_Result.md` и "дожидании стабилизации файла".
 
