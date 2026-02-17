@@ -469,6 +469,35 @@ class LoopRunner:
         with path.open("a", encoding="utf-8") as f:
             f.write(with_debug_timestamps(text))
 
+    def append_gateway_agent_message(self, path: Path, text: str) -> None:
+        """Append one runner-compatible agent_message JSON line for gateway delivery."""
+        payload_text = text.strip()
+        if not payload_text:
+            return
+
+        if self.runner.runner_name == "codex":
+            payload = {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": payload_text,
+                },
+            }
+        elif self.runner.runner_name == "kimi":
+            payload = {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": payload_text,
+                    }
+                ],
+            }
+        else:
+            return
+
+        self.append_text(path, json.dumps(payload, ensure_ascii=False) + "\n")
+
     @staticmethod
     def get_first_nonempty_line(user_prompt_text: str) -> Optional[str]:
         for raw_line in user_prompt_text.splitlines():
@@ -517,15 +546,17 @@ class LoopRunner:
         routing_updated_by: str,
     ) -> tuple[str, str, str]:
         if command_name == "show":
+            message_text = (
+                "Routing state\n"
+                f"- user_sender_id: {user_sender_id or '(unset)'}\n"
+                f"- updated_at: {routing_updated_at or '(never)'}\n"
+                f"- updated_by: {routing_updated_by or '(unknown)'}"
+            )
             self.append_text(
                 result_path,
-                (
-                    "Routing state\n"
-                    f"- user_sender_id: {user_sender_id or '(unset)'}\n"
-                    f"- updated_at: {routing_updated_at or '(never)'}\n"
-                    f"- updated_by: {routing_updated_by or '(unknown)'}\n"
-                ),
+                message_text + "\n",
             )
+            self.append_gateway_agent_message(result_path, message_text)
             self.write_console_line(
                 f"[routing] show user_sender_id='{user_sender_id or ''}' updated_by='{routing_updated_by or ''}'",
                 "darkyellow",
@@ -534,19 +565,23 @@ class LoopRunner:
 
         if command_name == "clear":
             self.write_routing_state("", "operator_command")
+            message_text = "Routing state updated\n- user_sender_id: (unset)\n- updated_by: operator_command"
             self.append_text(
                 result_path,
-                "Routing state updated\n- user_sender_id: (unset)\n- updated_by: operator_command\n",
+                message_text + "\n",
             )
+            self.append_gateway_agent_message(result_path, message_text)
             self.write_console_line("[routing] user_sender_id cleared by operator command", "yellow")
             return "", now_str(), "operator_command"
 
         if command_name == "set_user":
             if not command_arg or not self._is_valid_target_name(command_arg):
+                message_text = f"[routing] protocol error: invalid user_sender_id '{command_arg}'."
                 self.append_text(
                     result_path,
-                    f"[routing] protocol error: invalid user_sender_id '{command_arg}'.\n",
+                    message_text + "\n",
                 )
+                self.append_gateway_agent_message(result_path, message_text)
                 self.write_console_line(
                     f"[routing] protocol error: invalid user_sender_id '{command_arg}'",
                     "red",
@@ -554,21 +589,25 @@ class LoopRunner:
                 return user_sender_id, routing_updated_at, routing_updated_by
 
             self.write_routing_state(command_arg, "operator_command")
+            message_text = (
+                "Routing state updated\n"
+                f"- user_sender_id: {command_arg}\n"
+                "- updated_by: operator_command"
+            )
             self.append_text(
                 result_path,
-                (
-                    "Routing state updated\n"
-                    f"- user_sender_id: {command_arg}\n"
-                    "- updated_by: operator_command\n"
-                ),
+                message_text + "\n",
             )
+            self.append_gateway_agent_message(result_path, message_text)
             self.write_console_line(
                 f"[routing] user_sender_id set to '{command_arg}' by operator command",
                 "yellow",
             )
             return command_arg, now_str(), "operator_command"
 
-        self.append_text(result_path, f"[routing] protocol error: unsupported command '{command_name}'.\n")
+        message_text = f"[routing] protocol error: unsupported command '{command_name}'."
+        self.append_text(result_path, message_text + "\n")
+        self.append_gateway_agent_message(result_path, message_text)
         self.write_console_line(f"[routing] protocol error: unsupported command '{command_name}'", "red")
         return user_sender_id, routing_updated_at, routing_updated_by
 

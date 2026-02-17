@@ -11,7 +11,7 @@ sys.path.insert(0, str(REPO_ROOT / "Looper"))
 from codex_prompt_fileloop import LoopRunner  # noqa: E402
 
 
-class FakeRunner:
+class FakeCodexRunner:
     runner_name = "codex"
     supports_filesystem_session_detection = False
 
@@ -25,18 +25,61 @@ class FakeRunner:
                 continue
             if payload.get("type") == "agent_message" and isinstance(payload.get("text"), str):
                 messages.append(payload["text"])
+            elif (
+                payload.get("type") == "item.completed"
+                and isinstance(payload.get("item"), dict)
+                and payload["item"].get("type") == "agent_message"
+                and isinstance(payload["item"].get("text"), str)
+            ):
+                messages.append(payload["item"]["text"])
+        return messages
+
+
+class FakeKimiRunner:
+    runner_name = "kimi"
+    supports_filesystem_session_detection = False
+
+    @staticmethod
+    def extract_agent_messages(file_lines: list[str]) -> list[str]:
+        messages: list[str] = []
+        for line in file_lines:
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            if payload.get("role") != "assistant":
+                continue
+            content = payload.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if (
+                        isinstance(item, dict)
+                        and item.get("type") == "text"
+                        and isinstance(item.get("text"), str)
+                    ):
+                        messages.append(item["text"])
         return messages
 
 
 class TestLoopRunner(LoopRunner):
-    def __init__(self, executor_dir: Path, inbox_root: Path, agent_message_text: str = "") -> None:
+    def __init__(
+        self,
+        executor_dir: Path,
+        inbox_root: Path,
+        agent_message_text: str = "",
+        runner_kind: str = "codex",
+    ) -> None:
         self.console_messages: list[tuple[str, str]] = []
         self.agent_message_text = agent_message_text
         self.captured_prompts: list[str] = []
+        if runner_kind == "kimi":
+            runner = FakeKimiRunner()
+        else:
+            runner = FakeCodexRunner()
         super().__init__(
             executor_dir=executor_dir,
             inbox_root=inbox_root,
-            runner=FakeRunner(),
+            runner=runner,
             is_talker_context=True,
         )
 
@@ -47,7 +90,25 @@ class TestLoopRunner(LoopRunner):
         self.captured_prompts.append(prompt_text)
         if self.agent_message_text:
             with result_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps({"type": "agent_message", "text": self.agent_message_text}) + "\n")
+                if self.runner.runner_name == "kimi":
+                    payload = {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": self.agent_message_text,
+                            }
+                        ],
+                    }
+                else:
+                    payload = {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": self.agent_message_text,
+                        },
+                    }
+                f.write(json.dumps(payload) + "\n")
         return [], 0, "session-test"
 
 
@@ -65,7 +126,12 @@ def list_relay_files(inbox_root: Path, sender_id: str) -> list[Path]:
 
 
 class TalkerRoutingStabilizationTests(unittest.TestCase):
-    def create_runner(self, temp_root: Path, agent_message_text: str = "") -> TestLoopRunner:
+    def create_runner(
+        self,
+        temp_root: Path,
+        agent_message_text: str = "",
+        runner_kind: str = "codex",
+    ) -> TestLoopRunner:
         executor_dir = temp_root / "Talker"
         inbox_root = executor_dir / "Prompts" / "Inbox"
         inbox_root.mkdir(parents=True, exist_ok=True)
@@ -73,6 +139,7 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             executor_dir=executor_dir,
             inbox_root=inbox_root,
             agent_message_text=agent_message_text,
+            runner_kind=runner_kind,
         )
 
     def test_unit_unset_user_sender_id_blocks_relay(self) -> None:
@@ -162,6 +229,12 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             self.assertEqual("", user_sender_id)
             self.assertEqual("operator_command", updated_by)
             self.assertEqual([], runner.captured_prompts)
+            result_text = "\n".join(
+                p.read_text(encoding="utf-8")
+                for p in (runner.inbox_root / "tg_corriscant").glob("Prompt_*_Result.md")
+            )
+            self.assertIn('"type": "item.completed"', result_text)
+            self.assertIn('"type": "agent_message"', result_text)
 
     def test_unit_non_talker_prompt_has_no_talker_routing_instructions(self) -> None:
         prompt_text = LoopRunner.build_loop_prompt(
@@ -172,6 +245,32 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
         )
         self.assertNotIn("Fixed User Sender ID", prompt_text)
         self.assertNotIn("Talker relay contract", prompt_text)
+
+    def test_unit_routing_control_commands_emit_kimi_agent_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runner = self.create_runner(Path(temp_dir), runner_kind="kimi")
+
+            write_prompt(
+                runner.inbox_root,
+                sender_id="tg_corriscant",
+                marker="2026_02_17_00_00_00_000",
+                text="/routing show",
+            )
+            write_prompt(
+                runner.inbox_root,
+                sender_id="tg_corriscant",
+                marker="2026_02_17_00_00_01_000",
+                text="/looper stop",
+            )
+
+            runner.run_forever()
+
+            result_text = (runner.inbox_root / "tg_corriscant" / "Prompt_2026_02_17_00_00_00_000_Result.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn('"role": "assistant"', result_text)
+            self.assertIn('"type": "text"', result_text)
+            self.assertIn("Routing state", result_text)
 
     def test_e2e_user_prompt_is_processed_by_talker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -207,6 +306,37 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
                 "[Orc_Project]: done"
             )
             runner = self.create_runner(Path(temp_dir), agent_message_text=relay_text)
+            runner.write_routing_state("tg_corriscant", "operator_command")
+
+            write_prompt(
+                runner.inbox_root,
+                sender_id="Orc_Project",
+                marker="2026_02_17_00_00_00_000",
+                text="status?",
+            )
+            write_prompt(
+                runner.inbox_root,
+                sender_id="tg_corriscant",
+                marker="2026_02_17_00_00_01_000",
+                text="/looper stop",
+            )
+
+            runner.run_forever()
+
+            self.assertEqual(1, len(list_relay_files(runner.inbox_root, "tg_corriscant")))
+            self.assertEqual([], list_relay_files(runner.inbox_root, "tg_user"))
+
+    def test_e2e_orchestrator_relay_delivers_only_to_fixed_user_sender_id_kimi(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            relay_text = (
+                "---\n"
+                "type: relay\n"
+                "target: tg_corriscant\n"
+                "from: Orc_Project\n"
+                "---\n"
+                "[Orc_Project]: done"
+            )
+            runner = self.create_runner(Path(temp_dir), agent_message_text=relay_text, runner_kind="kimi")
             runner.write_routing_state("tg_corriscant", "operator_command")
 
             write_prompt(
