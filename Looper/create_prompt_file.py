@@ -8,6 +8,7 @@ Usage examples:
 from __future__ import annotations
 
 import argparse
+import codecs
 import sys
 import uuid
 import re
@@ -60,12 +61,23 @@ def _allocate_prompt_path(inbox: Path, suffix: str) -> Path:
     raise RuntimeError(f"could not allocate unique prompt marker in {inbox}")
 
 
+def _read_text_from_file(src: Path) -> str:
+    raw = src.read_bytes()
+    if raw.startswith(codecs.BOM_UTF8):
+        return raw.decode("utf-8-sig")
+    if raw.startswith(codecs.BOM_UTF32_LE) or raw.startswith(codecs.BOM_UTF32_BE):
+        return raw.decode("utf-32")
+    if raw.startswith(codecs.BOM_UTF16_LE) or raw.startswith(codecs.BOM_UTF16_BE):
+        return raw.decode("utf-16")
+    return raw.decode("utf-8")
+
+
 def _read_content(args: argparse.Namespace) -> str:
     if args.from_file:
         src = Path(args.from_file).expanduser().resolve()
         if not src.exists():
             raise FileNotFoundError(f"source file not found: {src}")
-        return src.read_text(encoding="utf-8")
+        return _read_text_from_file(src)
 
     if args.text is not None:
         return args.text
@@ -113,7 +125,7 @@ def _build_parser() -> argparse.ArgumentParser:
     create.add_argument("--inbox", required=True, help="Target inbox folder path.")
     create.add_argument("--suffix", help="Optional marker suffix (alnum only).")
     group = create.add_mutually_exclusive_group(required=True)
-    group.add_argument("--from-file", help="Read prompt content from UTF-8 file.")
+    group.add_argument("--from-file", help="Read prompt content from UTF text file (UTF-8 default, BOM-aware).")
     group.add_argument("--text", help="Prompt content passed as CLI text.")
     group.add_argument("--stdin", action="store_true", help="Read prompt content from stdin.")
     create.set_defaults(func=_cmd_create)
