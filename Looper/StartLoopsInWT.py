@@ -52,6 +52,15 @@ def normalize_for_match(text: str) -> str:
     return text.lower().replace("/", "\\")
 
 
+def contains_path_token(haystack: str, needle: str) -> bool:
+    if not needle:
+        return False
+    # Require non-alphanumeric boundaries to avoid partial name matches
+    # (for example, Executor_Merge vs Executor_Merger).
+    pattern = re.compile(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])")
+    return bool(pattern.search(haystack))
+
+
 def get_powershell_executable() -> str:
     return shutil.which("powershell") or shutil.which("pwsh") or ""
 
@@ -125,7 +134,10 @@ def test_agent_already_running(
         lower = normalize_for_match(cmd)
         if "codex_prompt_fileloop.py" not in lower and "codexloop.bat" not in lower:
             continue
-        if project_norm in lower and (agent_rel_norm in lower or agent_abs_norm in lower):
+        has_project = contains_path_token(lower, project_norm)
+        has_agent_rel = contains_path_token(lower, agent_rel_norm)
+        has_agent_abs = contains_path_token(lower, agent_abs_norm)
+        if has_project and (has_agent_rel or has_agent_abs):
             return True
     return False
 
