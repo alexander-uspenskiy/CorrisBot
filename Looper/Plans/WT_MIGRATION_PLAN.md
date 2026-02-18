@@ -22,7 +22,7 @@
   - 1-2 рабочих tab для одновременного мониторинга (внутри pane-сетка).
   - Остальные агенты размещаются в дополнительных tabs.
 - Рекомендованный стартовый профиль раскладки:
-  - Tab `Core`: 4 panes (Orchestrator, Talker, Executor_001, Executor_002).
+  - Tab `Core`: 4 panes (Orchestrator, Talker, Worker_001, Worker_002).
   - Tabs `Exec-A`, `Exec-B`, ...: по 2-4 агента в pane-раскладке.
 
 ## Именование tab/pane
@@ -31,7 +31,7 @@
 
 Пример:
 - `[ProjectFolder_Template] Orchestrator`
-- `[ProjectFolder_Template] Executors/Executor_001`
+- `[ProjectFolder_Template] Workers/Worker_001`
 
 `ProjectTag` берется из имени каталога проекта.
 
@@ -85,7 +85,7 @@
 5. Обновить prompt-шаблоны оркестратора на корректный fire-and-forget запуск через WT.
 
 ## Критерии готовности
-- Можно поднять Orchestrator + минимум 2 Executors в одном WT окне.
+- Можно поднять Orchestrator + минимум 2 Workers в одном WT окне.
 - Не создаются дубли процессов при повторном запуске launcher'а.
 - Заголовки tab/pane однозначно показывают проект и агента.
 - Legacy `CodexLoop.bat` по-прежнему запускает одиночный лупер.

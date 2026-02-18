@@ -384,13 +384,13 @@ from agent_runners import AgentRunner, CodexRunner
 
 **Было**:
 ```python
-def __init__(self, executor_dir, inbox_root, sandbox_mode, approval_policy,
+def __init__(self, worker_dir, inbox_root, sandbox_mode, approval_policy,
              web_search_enabled, dangerously_bypass_sandbox, codex_bin):
 ```
 **Стало**:
 ```python
-def __init__(self, executor_dir: Path, inbox_root: Path, runner: AgentRunner) -> None:
-    self.executor_dir = executor_dir
+def __init__(self, worker_dir: Path, inbox_root: Path, runner: AgentRunner) -> None:
+    self.worker_dir = worker_dir
     self.inbox_root = inbox_root
     self.runner = runner
     self.inbox_root.mkdir(parents=True, exist_ok=True)
@@ -410,7 +410,7 @@ def __init__(self, executor_dir: Path, inbox_root: Path, runner: AgentRunner) ->
 
 **Построение команды** (заменить строки 394-417):
 ```python
-cmd, stdin_text = self.runner.build_command(prompt_text, thread_id, self.executor_dir)
+cmd, stdin_text = self.runner.build_command(prompt_text, thread_id, self.worker_dir)
 ```
 
 **Pre-run hook** (перед subprocess.Popen):
@@ -426,7 +426,7 @@ proc = subprocess.Popen(
     stdin=stdin_mode,
     stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT,
-    cwd=self.executor_dir,
+    cwd=self.worker_dir,
     encoding="utf-8", errors="replace", bufsize=1,
 )
 ```
@@ -452,7 +452,7 @@ for event in events:
     if ev == "reasoning":
         self.write_console_line(f"[reasoning] {event['text']}", "darkgray")
     elif ev == "agent_message":
-        self.write_console_line(f"[{self.executor_dir.name}] {event['text']}", "green")
+        self.write_console_line(f"[{self.worker_dir.name}] {event['text']}", "green")
     elif ev == "command_started":
         self.write_console_line(f"[command] {event['command']} (in_progress)", "darkgray")
     elif ev == "command_completed":
@@ -637,7 +637,7 @@ else:
     raise RuntimeError(f"Unknown runner: {args.runner}")
 
 loop_runner = LoopRunner(
-    executor_dir=agent_dir,
+    worker_dir=agent_dir,
     inbox_root=inbox_root,
     runner=runner,
 )
@@ -1016,7 +1016,7 @@ py -3 .\codex_prompt_fileloop.py --project-root "%~1" --agent-path "%AGENT_PATH%
 {
   "agents": [
     {"path": ".", "runner": "codex"},
-    {"path": "Executors/Executor_001", "runner": "kimi"}
+    {"path": "Workers/Worker_001", "runner": "kimi"}
   ]
 }
 ```
@@ -1053,7 +1053,7 @@ git commit -m "feat: add KimiLoop.bat and runner selection in startup chain"
 По умолчанию используется Codex CLI. Для запуска лупера с Kimi Code CLI:
 
 **Вручную:**
-`Looper\KimiLoop.bat "<ProjectPath>" "Executors/Executor_002"`
+`Looper\KimiLoop.bat "<ProjectPath>" "Workers/Worker_002"`
 
 **Через Windows Terminal (`loops.wt.json`):**
 Добавить поле `"runner": "kimi"` для нужного агента в массиве `agents`.

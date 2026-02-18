@@ -18,7 +18,7 @@ Usage: py assemble_agents.py <template_path> <output_path>
 ```bat
 ren "C:\CorrisBot\Talker\AGENTS.md" "AGENTS_TEMPLATE.md"
 ren "C:\CorrisBot\ProjectFolder_Template\Orchestrator\AGENTS.md" "AGENTS_TEMPLATE.md"
-ren "C:\CorrisBot\ProjectFolder_Template\Executors\Executor_001\AGENTS.md" "AGENTS_TEMPLATE.md"
+ren "C:\CorrisBot\ProjectFolder_Template\Workers\Worker_001\AGENTS.md" "AGENTS_TEMPLATE.md"
 ```
 
 > **НЕ трогать** `C:\CorrisBot\Gateways\Telegram\AGENTS.md` — это документация протокола Gateway, не шаблон агента.
@@ -53,17 +53,17 @@ if not exist "%DEST_ROOT%\Orchestrator\AGENTS.md" (
 )
 ```
 
-### 4. Модифицировать `C:\CorrisBot\Looper\CreateExecutorStructure.bat`
+### 4. Модифицировать `C:\CorrisBot\Looper\CreateWorkerStructure.bat`
 
-Строка 62 — цикл `for %%F in (AGENTS.md Info.md ROLE_EXECUTOR.md)`:
-- Убрать `AGENTS.md` из списка → `for %%F in (Info.md ROLE_EXECUTOR.md)`
+Строка 62 — цикл `for %%F in (AGENTS.md Info.md ROLE_WORKER.md)`:
+- Убрать `AGENTS.md` из списка → `for %%F in (Info.md ROLE_WORKER.md)`
 - После цикла (после строки 73) добавить:
 
 ```bat
 if not exist "%DEST_ROOT%\AGENTS.md" (
   py "%~dp0assemble_agents.py" "%SOURCE_ROOT%\AGENTS_TEMPLATE.md" "%DEST_ROOT%\AGENTS.md"
   if errorlevel 1 (
-    echo Failed to assemble Executor AGENTS.md
+    echo Failed to assemble Worker AGENTS.md
     exit /b 8
   )
 )
@@ -85,7 +85,7 @@ py "C:\CorrisBot\Looper\assemble_agents.py" "C:\CorrisBot\Talker\AGENTS_TEMPLATE
    py "C:\CorrisBot\Looper\assemble_agents.py" "C:\CorrisBot\ProjectFolder_Template\Orchestrator\AGENTS_TEMPLATE.md" "C:\CorrisBot\ProjectFolder_Template\Orchestrator\test_agents.md"
    ```
    Проверить результат, удалить `test_agents.md`.
-3. То же для Executor.
+3. То же для Worker.
 
 ## Файлы, участвующие в сборке (Read-цепочка)
 
@@ -93,4 +93,4 @@ py "C:\CorrisBot\Looper\assemble_agents.py" "C:\CorrisBot\Talker\AGENTS_TEMPLATE
 |---|---|
 | `Talker/AGENTS_TEMPLATE.md` | `ROLE_LOOPER_BASE.md`, `ROLE_TALKER.md` → `SKILL_GATEWAY_IO.md`, `SKILL_AGENT_RUNNER.md` |
 | `Orchestrator/AGENTS_TEMPLATE.md` | `ROLE_LOOPER_BASE.md`, `SKILL_TALKER.md` → `SKILL_GATEWAY_IO.md`, `ROLE_ORCHESTRATOR.md` → `SKILL_AGENT_RUNNER.md` |
-| `Executor_001/AGENTS_TEMPLATE.md` | `ROLE_LOOPER_BASE.md`, `SKILL_TALKER.md` → `SKILL_GATEWAY_IO.md`, `ROLE_EXECUTOR.md` |
+| `Worker_001/AGENTS_TEMPLATE.md` | `ROLE_LOOPER_BASE.md`, `SKILL_TALKER.md` → `SKILL_GATEWAY_IO.md`, `ROLE_WORKER.md` |

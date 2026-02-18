@@ -24,7 +24,7 @@ For current product mode:
 - one real user,
 - one Talker looper process,
 - one Talker LLM session,
-- multiple internal agents (`Orc_*`, `Executor_*`, etc.).
+- multiple internal agents (`Orc_*`, `Worker_*`, etc.).
 
 Implication:
 - no multi-user routing logic is needed in Talker runtime;

@@ -64,7 +64,7 @@ class FakeKimiRunner:
 class TestLoopRunner(LoopRunner):
     def __init__(
         self,
-        executor_dir: Path,
+        worker_dir: Path,
         inbox_root: Path,
         agent_message_text: str = "",
         runner_kind: str = "codex",
@@ -77,7 +77,7 @@ class TestLoopRunner(LoopRunner):
         else:
             runner = FakeCodexRunner()
         super().__init__(
-            executor_dir=executor_dir,
+            worker_dir=worker_dir,
             inbox_root=inbox_root,
             runner=runner,
             is_talker_context=True,
@@ -132,11 +132,11 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
         agent_message_text: str = "",
         runner_kind: str = "codex",
     ) -> TestLoopRunner:
-        executor_dir = temp_root / "Talker"
-        inbox_root = executor_dir / "Prompts" / "Inbox"
+        worker_dir = temp_root / "Talker"
+        inbox_root = worker_dir / "Prompts" / "Inbox"
         inbox_root.mkdir(parents=True, exist_ok=True)
         return TestLoopRunner(
-            executor_dir=executor_dir,
+            worker_dir=worker_dir,
             inbox_root=inbox_root,
             agent_message_text=agent_message_text,
             runner_kind=runner_kind,
@@ -257,7 +257,7 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
     def test_unit_non_talker_prompt_has_no_talker_routing_instructions(self) -> None:
         prompt_text = LoopRunner.build_loop_prompt(
             user_prompt="hello",
-            sender_id="Executor_001",
+            sender_id="Worker_001",
             user_sender_id="",
             is_talker_context=False,
         )

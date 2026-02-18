@@ -20,7 +20,7 @@ if not exist "%DEST_PROJECT_ROOT%\" (
   )
 )
 
-for %%D in ("" "Executors" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox" "Orchestrator\Prompts\Inbox\Talker") do (
+for %%D in ("" "Workers" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox" "Orchestrator\Prompts\Inbox\Talker") do (
   if not exist "%TEMPLATE_ROOT%\%%~D\" (
     echo Missing required source directory: "%TEMPLATE_ROOT%\%%~D"
     exit /b 4
@@ -54,7 +54,7 @@ if not exist "%DEST_ROOT%\Orchestrator\AGENTS.md" (
   )
 )
 
-for %%D in ("" "Executors" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox\Talker") do (
+for %%D in ("" "Workers" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox\Talker") do (
   for %%N in (Info.md .Info.md) do (
     if exist "%TEMPLATE_ROOT%\%%~D\%%N" (
       if not exist "%DEST_ROOT%\%%~D\%%N" (

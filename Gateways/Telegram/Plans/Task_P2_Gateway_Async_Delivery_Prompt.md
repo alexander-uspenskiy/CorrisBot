@@ -7,7 +7,7 @@
   - `Gateways/Telegram/tg_codex_gateway.py` — gateway Telegram -> Talker looper.
   - `Looper/codex_prompt_fileloop.py` — файловый loop runner (timestamp prompts).
   - `Talker` — основной looper для общения с пользователем.
-  - `Orchestrator` и `Executors` — проектные loopers.
+  - `Orchestrator` и `Workers` — проектные loopers.
 
 ## Что наблюдалось (проблема пункта 2)
 В реальном тесте Talker после постановки задачи Orchestrator не завершил turn, а начал внутреннее синхронное ожидание с таймаутами/опросом и сообщениями "жду/повторю".  

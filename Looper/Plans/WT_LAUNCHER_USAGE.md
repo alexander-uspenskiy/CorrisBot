@@ -11,13 +11,13 @@ Examples:
 
 ```bat
 StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Orchestrator
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Executors\Executor_001
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Workers\Worker_001
 ```
 
 Optional:
 
 ```bat
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Executors\Executor_001 --dry-run
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Workers\Worker_001 --dry-run
 ```
 
 ## Behavior

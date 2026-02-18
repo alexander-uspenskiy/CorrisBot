@@ -5,7 +5,7 @@ if "%~1"=="" goto :usage
 if "%~2"=="" goto :usage
 if not "%~3"=="" goto :usage
 
-set "SOURCE_ROOT=C:\CorrisBot\ProjectFolder_Template\Executors\Executor_001"
+set "SOURCE_ROOT=C:\CorrisBot\ProjectFolder_Template\Workers\Worker_001"
 set "SUBFOLDER_NAME=%~1"
 set "ORCHESTRATOR_NAME=%~2"
 set "DEST_ROOT=%CD%\%SUBFOLDER_NAME%"
@@ -59,7 +59,7 @@ if not exist "%DEST_ROOT%\Prompts\Inbox\%ORCHESTRATOR_NAME%\" (
   )
 )
 
-for %%F in (Info.md ROLE_EXECUTOR.md) do (
+for %%F in (Info.md ROLE_WORKER.md) do (
   if not exist "%SOURCE_ROOT%\%%F" (
     echo Missing required source file: "%SOURCE_ROOT%\%%F"
     exit /b 7
@@ -75,7 +75,7 @@ for %%F in (Info.md ROLE_EXECUTOR.md) do (
 if not exist "%DEST_ROOT%\AGENTS.md" (
   py "%~dp0assemble_agents.py" "%SOURCE_ROOT%\AGENTS_TEMPLATE.md" "%DEST_ROOT%\AGENTS.md"
   if errorlevel 1 (
-    echo Failed to assemble Executor AGENTS.md
+    echo Failed to assemble Worker AGENTS.md
     exit /b 8
   )
 )
@@ -85,6 +85,6 @@ exit /b 0
 
 :usage
 echo Usage: %~nx0 ^<subfolder_name^> ^<orchestrator_name^>
-echo Creates new executor structure in current directory.
-echo Example: %~nx0 Executor_002 Orc1
+echo Creates new worker structure in current directory.
+echo Example: %~nx0 Worker_002 Orc1
 exit /b 1

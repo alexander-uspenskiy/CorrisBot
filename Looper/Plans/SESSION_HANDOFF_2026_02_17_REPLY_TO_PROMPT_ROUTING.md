@@ -2,7 +2,7 @@
 
 ## 1) Контекст сессии
 
-Целью было ужесточить и формализовать инструкции AGENTS/template-цепочки для мультиагентной коммуникации (Talker <-> Orchestrator <-> Executors), без регрессии рабочего поведения Codex.
+Целью было ужесточить и формализовать инструкции AGENTS/template-цепочки для мультиагентной коммуникации (Talker <-> Orchestrator <-> Workers), без регрессии рабочего поведения Codex.
 
 Отдельно разбирался инцидент от **2026-02-17**: Talker не переслал сообщение от оркестратора, хотя файл появился в `Talker/Prompts/Inbox/Orc_.CorrisBot_TestProject_6/`.
 
@@ -42,7 +42,7 @@
 - `Looper/ROLE_LOOPER_BASE.md`
 - `Looper/SKILL_GATEWAY_IO.md`
 - `ProjectFolder_Template/Orchestrator/ROLE_ORCHESTRATOR.md`
-- `ProjectFolder_Template/Executors/Executor_001/ROLE_EXECUTOR.md`
+- `ProjectFolder_Template/Workers/Worker_001/ROLE_WORKER.md`
 
 Основное:
 
@@ -70,7 +70,7 @@
 - `Looper/SKILL_AGENT_RUNNER.md`
 - `Talker/ROLE_TALKER.md`
 - `ProjectFolder_Template/Orchestrator/ROLE_ORCHESTRATOR.md`
-- `ProjectFolder_Template/Executors/Executor_001/ROLE_EXECUTOR.md`
+- `ProjectFolder_Template/Workers/Worker_001/ROLE_WORKER.md`
 
 Дополнительно:
 
@@ -109,7 +109,7 @@
 - Сборка AGENTS из template:
   - Talker
   - Orchestrator (template)
-  - Executor (template)
+  - Worker (template)
 - `py -m py_compile`:
   - `Looper/create_prompt_file.py`
   - `Looper/codex_prompt_fileloop.py`
@@ -156,7 +156,7 @@
 - `Looper/ROLE_LOOPER_BASE.md`
 - `Looper/SKILL_GATEWAY_IO.md`
 - `ProjectFolder_Template/Orchestrator/ROLE_ORCHESTRATOR.md`
-- `ProjectFolder_Template/Executors/Executor_001/ROLE_EXECUTOR.md`
+- `ProjectFolder_Template/Workers/Worker_001/ROLE_WORKER.md`
 - `Talker/ROLE_TALKER.md`
 - `Talker/Prompts/Inbox/Console.log`
 - `Talker/Prompts/Inbox/Orc_.CorrisBot_TestProject_6/Prompt_2026_02_17_15_55_000.md`

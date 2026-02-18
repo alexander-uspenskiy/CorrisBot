@@ -56,12 +56,12 @@ def with_debug_timestamps(text: str) -> str:
 class LoopRunner:
     def __init__(
         self,
-        executor_dir: Path,
+        worker_dir: Path,
         inbox_root: Path,
         runner: AgentRunner,
         is_talker_context: bool = False,
     ) -> None:
-        self.executor_dir = executor_dir
+        self.worker_dir = worker_dir
         self.inbox_root = inbox_root
         self.runner = runner
         self.inbox_root.mkdir(parents=True, exist_ok=True)
@@ -334,7 +334,7 @@ class LoopRunner:
         return f"{rules}\n{user_prompt}"
 
     def run_agent(self, prompt_text: str, thread_id: Optional[str], result_path: Path) -> tuple[list[str], int, Optional[str]]:
-        cmd, stdin_text = self.runner.build_command(prompt_text, thread_id, self.executor_dir)
+        cmd, stdin_text = self.runner.build_command(prompt_text, thread_id, self.worker_dir)
 
         self.runner.pre_run_hook()
 
@@ -346,7 +346,7 @@ class LoopRunner:
                 stdin=stdin_mode,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                cwd=self.executor_dir,
+                cwd=self.worker_dir,
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
@@ -381,7 +381,7 @@ class LoopRunner:
                         if ev == "reasoning":
                             self.write_console_line(f"[reasoning] {event['text']}", "darkgray")
                         elif ev == "agent_message":
-                            self.write_console_line(f"[{self.executor_dir.name}] {event['text']}", "green")
+                            self.write_console_line(f"[{self.worker_dir.name}] {event['text']}", "green")
                         elif ev == "command_started":
                             self.write_console_line(f"[command] {event['command']} (in_progress)", "darkgray")
                         elif ev == "command_completed":
@@ -1073,12 +1073,12 @@ def parse_args() -> argparse.Namespace:
         "--agent-path",
         help=(
             "Agent directory path. Can be absolute or relative to project root "
-            "(for example, Orchestrator or Executors/Executor_001)."
+            "(for example, Orchestrator or Workers/Worker_001)."
         ),
     )
     parser.add_argument(
-        "--executor-id",
-        help="Legacy shortcut for agent path under Executors (for example, Executor_001).",
+        "--worker-id",
+        help="Legacy shortcut for agent path under Workers (for example, Worker_001).",
     )
     parser.add_argument(
         "--sandbox",
@@ -1129,11 +1129,11 @@ def main() -> int:
             agent_dir = candidate.resolve()
         else:
             agent_dir = (project_root / candidate).resolve()
-    elif args.executor_id:
+    elif args.worker_id:
         # Backward compatibility for older launchers.
-        agent_dir = (project_root / "Executors" / args.executor_id).resolve()
+        agent_dir = (project_root / "Workers" / args.worker_id).resolve()
     else:
-        raise RuntimeError("Either --agent-path or --executor-id must be provided.")
+        raise RuntimeError("Either --agent-path or --worker-id must be provided.")
 
     inbox_root = agent_dir / "Prompts" / "Inbox"
 
@@ -1160,7 +1160,7 @@ def main() -> int:
         raise RuntimeError(f"Unknown runner: {args.runner}")
 
     loop_runner = LoopRunner(
-        executor_dir=agent_dir,
+        worker_dir=agent_dir,
         inbox_root=inbox_root,
         runner=runner,
         is_talker_context=bool(args.talker_routing),

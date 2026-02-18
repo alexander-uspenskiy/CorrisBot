@@ -2,7 +2,7 @@
 
 ## Project
 Repository: `C:\CorrisBot\Looper`
-Goal: reusable file-based looper for multi-agent platform (Orchestrator / Executor / Talker / etc.) using prompt files in inbox directories.
+Goal: reusable file-based looper for multi-agent platform (Orchestrator / Worker / Talker / etc.) using prompt files in inbox directories.
 
 ## Current Runtime Architecture
 - Main loop script: `codex_prompt_fileloop.py`
@@ -35,7 +35,7 @@ Goal: reusable file-based looper for multi-agent platform (Orchestrator / Execut
 Example:
 ```bat
 StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Orchestrator
-StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Executors\Executor_001
+StartLoopsInWT.bat C:\CorrisBot\ProjectFolder_Template Workers\Worker_001
 ```
 
 ## Important Prompting Behavior Learned

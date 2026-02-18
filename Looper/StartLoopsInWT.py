@@ -60,7 +60,7 @@ def contains_path_token(haystack: str, needle: str) -> bool:
     if not needle:
         return False
     # Require non-alphanumeric boundaries to avoid partial name matches
-    # (for example, Executor_Merge vs Executor_Merger).
+    # (for example, Worker_Merge vs Worker_Merger).
     pattern = re.compile(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])")
     return bool(pattern.search(haystack))
 
@@ -442,7 +442,7 @@ def run_wt_command(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch one looper in Windows Terminal with dynamic pane allocation.")
     parser.add_argument("project_root", help="Path to project root directory.")
-    parser.add_argument("agent_path", help="Agent path relative to project root (for example, Executors\\Executor_001).")
+    parser.add_argument("agent_path", help="Agent path relative to project root (for example, Workers\\Worker_001).")
     parser.add_argument(
         "--config-path",
         default=str(SCRIPT_DIR.parent / "loops.wt.json"),

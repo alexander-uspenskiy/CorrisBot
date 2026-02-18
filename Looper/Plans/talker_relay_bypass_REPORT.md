@@ -4,7 +4,7 @@
 2026-02-16
 
 ## Задача
-Реализация механизма relay bypass для Talker Looper — автоматическая доставка сообщений от внутренних агентов (Orc, Executor) к пользователю без лишних LLM-вызовов.
+Реализация механизма relay bypass для Talker Looper — автоматическая доставка сообщений от внутренних агентов (Orc, Worker) к пользователю без лишних LLM-вызовов.
 
 ---
 
@@ -19,7 +19,7 @@
 **Стало:** Talker использует YAML-блок в своём Result-файле:
 
 ```markdown
-- Правило relay для входящих внутренних сообщений (sender вида `Orc_*`, `Executor_*`):
+- Правило relay для входящих внутренних сообщений (sender вида `Orc_*`, `Worker_*`):
   - **КРИТИЧНО**: ты НЕ должен создавать файлы вручную в inbox пользователя (`tg_*`)
   - формат ответа для автоматической ретрансляции:
 
@@ -133,7 +133,7 @@ python C:\CorrisBot\Looper\assemble_agents.py C:\CorrisBot\Talker\AGENTS_TEMPLAT
 
 ### Для составителя промпта (Talker):
 
-При получении сообщения от внутреннего агента (`Orc_*`, `Executor_*`):
+При получении сообщения от внутреннего агента (`Orc_*`, `Worker_*`):
 
 1. **Не создавай файл вручную** в `tg_*` inbox
 2. **Используй YAML-блок** в своём Result-файле:
@@ -193,7 +193,7 @@ feat: implement relay bypass for Talker looper
 - Rebuild AGENTS.md from template
 - Move relay processing after thread_id validation to prevent duplicates
 
-Relay bypass allows internal agents (Orc, Executor) to send messages
+Relay bypass allows internal agents (Orc, Worker) to send messages
 to users without extra LLM calls or content distortion.
 ```
 

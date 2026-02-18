@@ -39,7 +39,7 @@
    - Оставить возможность sync-режима по явной фразе пользователя:
      - например: "дождись ответа и верни в этом же сообщении".
 3. Непротиворечивость прочих ролей:
-   - Проверить, что `ProjectFolder_Template/Orchestrator/ROLE_ORCHESTRATOR.md` и `ROLE_EXECUTOR.md` не содержат конфликтующих обязательных sync-дефолтов.
+   - Проверить, что `ProjectFolder_Template/Orchestrator/ROLE_ORCHESTRATOR.md` и `ROLE_WORKER.md` не содержат конфликтующих обязательных sync-дефолтов.
 4. Сборка AGENTS:
    - Пересобрать `Talker/AGENTS.md` после правок шаблонов/ролей.
    - Убедиться, что шаблонный `## CRITICAL` в `Talker/AGENTS_TEMPLATE.md` остается в шаблоне, но отсутствует в собранном `Talker/AGENTS.md` (текущая сборка должна это уметь).
