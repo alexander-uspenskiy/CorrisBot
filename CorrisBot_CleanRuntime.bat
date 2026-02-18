@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 if /I "%~1"=="--help" goto :usage
 if /I "%~1"=="-h" goto :usage
@@ -40,11 +40,17 @@ if errorlevel 1 (
 if "%FORCE%"=="0" (
   echo [WARN] This will delete runtime prompts/sessions/temp artifacts.
   set /p "CONFIRM=Type YES to continue: "
-  if /I not "%CONFIRM%"=="YES" (
+  set "CONFIRM=!CONFIRM:"=!"
+  for /f "tokens=* delims= " %%A in ("!CONFIRM!") do set "CONFIRM=%%A"
+  set "CONFIRM=!CONFIRM: =!"
+  if /I "!CONFIRM!"=="YES" goto :confirm_ok
+  if /I "!CONFIRM!"=="Y" goto :confirm_ok
+  (
     echo [INFO] Cleanup canceled by user.
     exit /b 1
   )
 )
+:confirm_ok
 
 call :reset_dir "%TALKER_PROMPTS%"
 call :reset_dir "%TALKER_TEMP%"
