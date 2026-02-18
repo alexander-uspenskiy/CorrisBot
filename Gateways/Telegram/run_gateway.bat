@@ -83,7 +83,7 @@ if errorlevel 1 (
 )
 
 :run_wt
-"%WT_EXE%" -w "%WT_WINDOW%" new-tab --title "Telegram Gateway" --suppressApplicationTitle cmd /k set "REPO_ROOT=%REPO_ROOT%" ^&^& set "LOOPER_ROOT=%LOOPER_ROOT%" ^&^& set "TALKER_ROOT=%TALKER_ROOT%" ^&^& set "TEMPLATE_ROOT=%TEMPLATE_ROOT%" ^&^& cd /d "%WORKDIR%" ^&^& set "GATEWAY_SKIP_TALKER_BOOT=1" ^&^& py tg_codex_gateway.py "%TALKER_ROOT%" ; split-pane -V --title "Talker/%RUNNER% [Talker/Agents-01]" --suppressApplicationTitle cmd /k set "REPO_ROOT=%REPO_ROOT%" ^&^& set "LOOPER_ROOT=%LOOPER_ROOT%" ^&^& set "TALKER_ROOT=%TALKER_ROOT%" ^&^& set "TEMPLATE_ROOT=%TEMPLATE_ROOT%" ^&^& ""%LOOP_BAT%" "%TALKER_ROOT%" ".""
+"%WT_EXE%" -w "%WT_WINDOW%" new-tab --title "Telegram Gateway" --suppressApplicationTitle cmd /k set "REPO_ROOT=%REPO_ROOT%" ^&^& set "LOOPER_ROOT=%LOOPER_ROOT%" ^&^& set "TALKER_ROOT=%TALKER_ROOT%" ^&^& set "TEMPLATE_ROOT=%TEMPLATE_ROOT%" ^&^& cd /d "%WORKDIR%" ^&^& set "GATEWAY_SKIP_TALKER_BOOT=1" ^&^& py tg_codex_gateway.py "%TALKER_ROOT%" ; split-pane -V --title "Talker/%RUNNER% [Talker/Agents-01]" --suppressApplicationTitle cmd /k set "REPO_ROOT=%REPO_ROOT%" ^&^& set "LOOPER_ROOT=%LOOPER_ROOT%" ^&^& set "TALKER_ROOT=%TALKER_ROOT%" ^&^& set "TEMPLATE_ROOT=%TEMPLATE_ROOT%" ^&^& call "%LOOP_BAT%" "%TALKER_ROOT%" "."
 if %errorlevel%==0 exit /b 0
 echo [WARN] Failed to start Windows Terminal tab, fallback to direct run.
 
