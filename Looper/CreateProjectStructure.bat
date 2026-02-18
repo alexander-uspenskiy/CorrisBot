@@ -1,12 +1,27 @@
 @echo off
 setlocal EnableExtensions
 
+for %%I in ("%~dp0.") do set "SCRIPT_DIR_DEFAULT=%%~fI"
+for %%I in ("%SCRIPT_DIR_DEFAULT%\..") do set "REPO_ROOT_DEFAULT=%%~fI"
+set "LOOPER_ROOT_DEFAULT=%SCRIPT_DIR_DEFAULT%"
+set "TALKER_ROOT_DEFAULT=%REPO_ROOT_DEFAULT%\Talker"
+set "TEMPLATE_ROOT_DEFAULT=%REPO_ROOT_DEFAULT%\ProjectFolder_Template"
+
+if "%REPO_ROOT%"=="" (set "REPO_ROOT=%REPO_ROOT_DEFAULT%") else (for %%I in ("%REPO_ROOT%") do set "REPO_ROOT=%%~fI")
+if "%LOOPER_ROOT%"=="" (set "LOOPER_ROOT=%LOOPER_ROOT_DEFAULT%") else (for %%I in ("%LOOPER_ROOT%") do set "LOOPER_ROOT=%%~fI")
+if "%TALKER_ROOT%"=="" (set "TALKER_ROOT=%TALKER_ROOT_DEFAULT%") else (for %%I in ("%TALKER_ROOT%") do set "TALKER_ROOT=%%~fI")
+if "%TEMPLATE_ROOT%"=="" (set "TEMPLATE_ROOT=%TEMPLATE_ROOT_DEFAULT%") else (for %%I in ("%TEMPLATE_ROOT%") do set "TEMPLATE_ROOT=%%~fI")
+
 if "%~1"=="" goto :usage
 if not "%~2"=="" goto :usage
 
-set "TEMPLATE_ROOT=C:\CorrisBot\ProjectFolder_Template"
 set "DEST_PROJECT_ROOT=%~1"
 set "DEST_ROOT=%DEST_PROJECT_ROOT%"
+
+echo [PATHS] REPO_ROOT=%REPO_ROOT%
+echo [PATHS] LOOPER_ROOT=%LOOPER_ROOT%
+echo [PATHS] TALKER_ROOT=%TALKER_ROOT%
+echo [PATHS] TEMPLATE_ROOT=%TEMPLATE_ROOT%
 
 if not exist "%TEMPLATE_ROOT%\" (
   echo Source template root not found: "%TEMPLATE_ROOT%"

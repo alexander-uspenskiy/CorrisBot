@@ -20,7 +20,7 @@
 #        - TELEGRAM_BOT_TOKEN
 #        - ALLOWED_CHAT_ID   (your numeric chat_id)
 #   4) Start with Talker root parameter:
-#        python tg_codex_gateway.py C:\CorrisBot\Talker
+#        python tg_codex_gateway.py <repo_root>\Talker
 #   5) Ensure Looper launcher exists (StartLoopsInWT.bat) and Codex login is valid
 #
 # Telegram commands:
@@ -208,7 +208,19 @@ def _ensure_temp_dir():
     pass
 
 # --- Looper/Talker configuration ---
-_LOOPER_ROOT = os.environ.get("LOOPER_ROOT", r"C:\CorrisBot\Looper").strip() or r"C:\CorrisBot\Looper"
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT_DEFAULT = os.path.abspath(os.path.join(_SCRIPT_DIR, "..", ".."))
+_LOOPER_ROOT_DEFAULT = os.path.join(_REPO_ROOT_DEFAULT, "Looper")
+_TEMPLATE_ROOT_DEFAULT = os.path.join(_REPO_ROOT_DEFAULT, "ProjectFolder_Template")
+
+_REPO_ROOT = os.path.abspath(os.environ.get("REPO_ROOT", "").strip() or _REPO_ROOT_DEFAULT)
+_LOOPER_ROOT = os.path.abspath(os.environ.get("LOOPER_ROOT", "").strip() or _LOOPER_ROOT_DEFAULT)
+_TEMPLATE_ROOT = os.path.abspath(os.environ.get("TEMPLATE_ROOT", "").strip() or _TEMPLATE_ROOT_DEFAULT)
+
+os.environ["REPO_ROOT"] = _REPO_ROOT
+os.environ["LOOPER_ROOT"] = _LOOPER_ROOT
+os.environ["TEMPLATE_ROOT"] = _TEMPLATE_ROOT
+
 _TALKER_ROOT = ""
 _TALKER_INBOX_ROOT = ""
 _START_LOOPS_BAT = os.path.join(_LOOPER_ROOT, "StartLoopsInWT.bat")
@@ -244,6 +256,7 @@ def _configure_talker_paths(talker_root: str):
     raise SystemExit("Missing required argument: talker_root")
   _TALKER_ROOT = root
   _TALKER_INBOX_ROOT = os.path.join(_TALKER_ROOT, "Prompts", "Inbox")
+  os.environ["TALKER_ROOT"] = _TALKER_ROOT
 
 _ARGS = _parse_runtime_args()
 _configure_talker_paths(_ARGS.talker_root)
@@ -1884,7 +1897,9 @@ def main():
   print(f"[BOOT] Allowed chat_id = {ALLOWED_CHAT_ID_INT}")
   print(f"[BOOT] Current agent = {_CURRENT_AGENT}")
   print(f"[BOOT] Console mode = {_CONSOLE_MODE} (use /setconsole to change)")
+  print(f"[BOOT] Repo root = {_REPO_ROOT}")
   print(f"[BOOT] Looper root = {_LOOPER_ROOT}")
+  print(f"[BOOT] Template root = {_TEMPLATE_ROOT}")
   print(f"[BOOT] Talker root = {_TALKER_ROOT}")
   print(f"[BOOT] Inbox root = {_TALKER_INBOX_ROOT}")
   if _SENDER_ID_OVERRIDE:
