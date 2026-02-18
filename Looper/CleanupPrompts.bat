@@ -1,9 +1,12 @@
 @echo off
 setlocal
 
+set "SCRIPT_DIR=%~dp0"
+set "LOOPER_ROOT=%SCRIPT_DIR:~0,-1%"
+
 if "%~1"=="" (
   echo Usage: %~nx0 ^<project_path^>
-  echo Example 1: %~nx0 C:\CorrisBot\ProjectFolder_Template
+  echo Example 1: %~nx0 "%LOOPER_ROOT%\..\ProjectFolder_Template"
   pause
   exit /b 1
 )

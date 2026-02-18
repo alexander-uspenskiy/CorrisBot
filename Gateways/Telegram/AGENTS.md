@@ -4,11 +4,12 @@ This repo contains a "gateway" process that connects a chat channel (Telegram to
 to a Talker looper workflow (file-based prompt/result exchange).
 
 Current runtime model:
-- Gateway writes prompt files to Talker inbox: `C:\CorrisBot\Talker\Prompts\Inbox\<sender_id>\Prompt_<timestamp>.md`
+- Gateway writes prompt files to Talker inbox: `<TALKER_ROOT>\Prompts\Inbox\<sender_id>\Prompt_<timestamp>.md`
 - Looper processes prompts and writes results to `*_Result.md`
 - Gateway streams selected looper events back to Telegram
-- Gateway saves user-uploaded attachments to `C:\CorrisBot\Talker\Prompts\Inbox\<sender_id>\Files\`
+- Gateway saves user-uploaded attachments to `<TALKER_ROOT>\Prompts\Inbox\<sender_id>\Files\`
 - After saving an attachment, gateway sends an explicit system event prompt to Talker, so Talker is aware of the new file
+- `TALKER_ROOT` is provided by launcher (`$env:TALKER_ROOT` in PowerShell, `%TALKER_ROOT%` in cmd)
 
 The gateway can parse special directives embedded in the agent's natural language replies.
 
@@ -26,7 +27,7 @@ DELIVER_FILE: <path>
 Examples:
 
 Here is your audio file:
-DELIVER_FILE: C:\CorrisBot\KLF - Last Train to Trancentral.mp3
+DELIVER_FILE: C:\Temp\KLF - Last Train to Trancentral.mp3
 
 I generated 2 artifacts:
 DELIVER_FILE: exports\report.csv
@@ -39,4 +40,4 @@ When delivering files to the user (via DELIVER_FILE), the gateway strips SHA256 
 - The gateway is transport/orchestration glue; business logic should stay in Talker prompts/instructions.
 - The gateway is responsible for delivery (Telegram/Discord/etc.) and file ingestion from users.
 - The looper/agent side is responsible for deciding what to do with uploaded files and when to respond.
-- Agent-facing rules for file exchange (DELIVER_FILE syntax, incoming files path, response style) are defined in `C:\CorrisBot\Looper\SKILL_GATEWAY_IO.md` and loaded through each agent's AGENTS.md Read chain.
+- Agent-facing rules for file exchange (DELIVER_FILE syntax, incoming files path, response style) are defined in `Looper/SKILL_GATEWAY_IO.md` and loaded through each agent's AGENTS.md Read chain.

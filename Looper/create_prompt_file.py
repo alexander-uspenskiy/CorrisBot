@@ -1,8 +1,10 @@
 """Create inter-looper prompt files with guaranteed timestamp format.
 
 Usage examples:
-  py create_prompt_file.py create --inbox "C:\\Agent\\Prompts\\Inbox\\Talker" --from-file "Temp\\report.md"
-  py create_prompt_file.py create --inbox "C:\\Agent\\Prompts\\Inbox\\Talker" --text "/looper stop"
+  PowerShell:
+    py "$env:LOOPER_ROOT\\create_prompt_file.py" create --inbox "Prompts\\Inbox\\Talker" --from-file "Temp\\report.md"
+  cmd:
+    py "%LOOPER_ROOT%\\create_prompt_file.py" create --inbox "Prompts\\Inbox\\Talker" --text "/looper stop"
 """
 
 from __future__ import annotations

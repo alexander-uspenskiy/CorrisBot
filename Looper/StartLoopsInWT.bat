@@ -1,9 +1,11 @@
 @echo off
 setlocal
 
+set "SCRIPT_DIR=%~dp0"
+set "LOOPER_ROOT=%SCRIPT_DIR:~0,-1%"
+
 if "%~1"=="" goto :usage
 
-set "SCRIPT_DIR=%~dp0"
 set "PROJECT_ROOT=%~1"
 set "AGENT_PATH=%~2"
 set "DRY_RUN_FLAG="
@@ -101,12 +103,12 @@ exit /b 0
 
 :usage
 echo Usage: %~nx0 ^<project_root^> [agent_path] [--runner codex^|kimi] [--dry-run]
-echo Example 1: %~nx0 C:\CorrisBot\ProjectFolder_Template Orchestrator
-echo Example 2: %~nx0 C:\CorrisBot\ProjectFolder_Template Workers\Worker_001
-echo Example 3: %~nx0 C:\CorrisBot\Talker
-echo Example 4: %~nx0 C:\CorrisBot\Talker --dry-run
-echo Example 5: %~nx0 C:\CorrisBot\ProjectFolder_Template Workers\Worker_001 --dry-run
-echo Example 6: %~nx0 C:\CorrisBot\Talker . --runner kimi
+echo Example 1: %~nx0 "%LOOPER_ROOT%\..\ProjectFolder_Template" Orchestrator
+echo Example 2: %~nx0 "%LOOPER_ROOT%\..\ProjectFolder_Template" Workers\Worker_001
+echo Example 3: %~nx0 "%LOOPER_ROOT%\..\Talker"
+echo Example 4: %~nx0 "%LOOPER_ROOT%\..\Talker" --dry-run
+echo Example 5: %~nx0 "%LOOPER_ROOT%\..\ProjectFolder_Template" Workers\Worker_001 --dry-run
+echo Example 6: %~nx0 "%LOOPER_ROOT%\..\Talker" . --runner kimi
 echo.
 echo Options:
 echo   --runner codex^|kimi   Choose CLI agent (default: codex)
