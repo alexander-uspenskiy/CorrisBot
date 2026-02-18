@@ -30,7 +30,8 @@ When a prompt contains a valid `Reply-To:` block, execute the following steps in
 ### STEP 3: Create response file
 - Save response/report text to a local temporary file first.
 - Create destination prompt via helper script (do not handcraft filename):
-  - `py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "<InboxPath>" --from-file "<LocalReportFile.md>"`
+  - PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<InboxPath>" --from-file "<LocalReportFile.md>"`
+  - cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<InboxPath>" --from-file "<LocalReportFile.md>"`
 - Script output path is the final `<InboxPath>\<Filename>` in standard supported pattern.
 
 ### STEP 4: Verify delivery

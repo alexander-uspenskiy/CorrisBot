@@ -44,32 +44,36 @@ Read: `../Looper/SKILL_AGENT_RUNNER.md`
 
 ## Project Skeleton Setup
 
-Run `C:\CorrisBot\Looper\CreateProjectStructure.bat` with one argument: the project root path.
+Run `CreateProjectStructure.bat` via `LOOPER_ROOT` with one argument: the project root path.
 
-Command:
-`C:\CorrisBot\Looper\CreateProjectStructure.bat "<PROJECT_ROOT_PATH>"`
+Commands:
+- PowerShell: `& "$env:LOOPER_ROOT\CreateProjectStructure.bat" "<PROJECT_ROOT_PATH>"`
+- cmd: `"%LOOPER_ROOT%\CreateProjectStructure.bat" "<PROJECT_ROOT_PATH>"`
 
 Example:
-`C:\CorrisBot\Looper\CreateProjectStructure.bat "C:\Temp\.CreateProjectStructure_TEST"`
+- PowerShell: `& "$env:LOOPER_ROOT\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
+- cmd: `"%LOOPER_ROOT%\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
 
 What it does:
 - creates/completes the structure in `<PROJECT_ROOT_PATH>`
-- copies only the required files from `C:\CorrisBot\ProjectFolder_Template`
+- copies only the required files from `ProjectFolder_Template` near `LOOPER_ROOT`
 - does not overwrite existing files
 
 
 ## RUN ORCHESTRATOR 
 
 - После создания нового проекта - запускать оркестратор для него.
-- Для запуска оркестратора использовать команду:
-`C:\CorrisBot\Looper\StartLoopsInWT.bat "<PROJECT_ROOT_PATH>" "Orchestrator"`
+- Для запуска оркестратора использовать `StartLoopsInWT.bat` через `LOOPER_ROOT`:
+  - PowerShell: `& "$env:LOOPER_ROOT\StartLoopsInWT.bat" "<PROJECT_ROOT_PATH>" "Orchestrator"`
+  - cmd: `"%LOOPER_ROOT%\StartLoopsInWT.bat" "<PROJECT_ROOT_PATH>" "Orchestrator"`
 - `<PROJECT_ROOT_PATH>` - это корневой каталог проекта (например `C:\Temp\.TestProject`).
 - Если пользователь просит запустить оркестратор - запускать запрошенный. Подразумевается, что стуктура уже создана.
 Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.
-- Передача задач оркестратору делается через файловый prompt в его inbox по общему правилу луперов (см. `C:\CorrisBot\Looper\ROLE_LOOPER_BASE.md`):
+- Передача задач оркестратору делается через файловый prompt в его inbox по общему правилу луперов (см. `../Looper/ROLE_LOOPER_BASE.md`):
   - целевой каталог обычно: `<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker`
   - prompt-файл создавай helper-скриптом:
-    - `py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker" --from-file "<LocalPromptFile.md>"`
+    - PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker" --from-file "<LocalPromptFile.md>"`
+    - cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker" --from-file "<LocalPromptFile.md>"`
 - Для отчетов оркестратора в Talker используй проектно-уникальный SenderID (а не просто `Orchestrator`), например:
   - `Orc_<ProjectTag>` (пример: `Orc_TestProject`)
 - `ProjectTag` определяй детерминированно: это имя конечного каталога из `<PROJECT_ROOT_PATH>`.
@@ -78,7 +82,8 @@ What it does:
 - В ПЕРВОМ prompt к оркестратору по выбранному проекту обязательно явно передавай маршрут обратной связи (`Reply-To`) и фиксируй, что он действует на всю текущую проектную сессию.
   - Передавай `Reply-To` как структурированный блок (а не в свободной форме), например:
     - `Reply-To:`
-    - `- InboxPath: C:\CorrisBot\Talker\Prompts\Inbox\Orc_<ProjectTag>`
+    - `- InboxPath: $env:TALKER_ROOT\Prompts\Inbox\Orc_<ProjectTag>` (PowerShell)
+    - `- InboxPath: %TALKER_ROOT%\Prompts\Inbox\Orc_<ProjectTag>` (cmd)
     - `- SenderID: Orc_<ProjectTag>`
     - `- FilePattern: Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`
     - `- Scope: use this Reply-To for all further reports/questions in this project session until Talker sends updated Reply-To`

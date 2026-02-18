@@ -25,7 +25,8 @@ If a final file is created "just in case" and no path is provided, place it in `
 
 - Луперы могут общаться с другими луперами через их каталоги Prompts
 Для создания prompt-файла используй только helper-скрипт:
-`py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
+- PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
+- cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
 Не формируй имя `Prompt_*.md` вручную.
 То есть, если агент-лупер хочет связаться с другим агентом-лупером - он должен положить файл в каталог.
 Если каталога нет - создать его.

@@ -9,7 +9,10 @@
 - Выбираем название агенту. Должно быть простым, совместимым с файловой системой.
 - Сначала создается структура файлов для работы лупера:
 Run the script from the target parent folder, or call it by full path.  
-Example: `cd /d <ProjectPath>\Workers && "C:\CorrisBot\Looper\CreateWorkerStructure.bat" "Worker_002" "Orc1"` (quotes are required if arguments contain spaces; using quotes always is recommended).
+Examples:
+- PowerShell: `Set-Location "<ProjectPath>\Workers"; & "$env:LOOPER_ROOT\CreateWorkerStructure.bat" "Worker_002" "Orc1"`
+- cmd: `cd /d "<ProjectPath>\Workers" && "%LOOPER_ROOT%\CreateWorkerStructure.bat" "Worker_002" "Orc1"`
+(quotes are required if arguments contain spaces; using quotes always is recommended).
 (Здесь нюанс, что для Workers агентов есть отдельный подкаталог `Workers` в каталоге проекта).
 Переходим в папку, где хотим создать каталог для агента, и запускаем оттуда. 
 Первый праметр - это имя агента, второй - `SenderID` того, от кого этот агент ожидает входящие prompt-файлы (например, `Orc1`, `Orchestrator`, `Talker`).
@@ -17,8 +20,9 @@ Example: `cd /d <ProjectPath>\Workers && "C:\CorrisBot\Looper\CreateWorkerStruct
 
 # Запуск агента-лупера
 - После создания файловой структуры запускается сам Лупер (как скрипт-терминала + ИИ агент). 
-- Создается через запуск бат файла:
-`C:\CorrisBot\Looper\StartLoopsInWT.bat "<ProjectPath>" "Workers\Worker_002"`
+- Создается через запуск `StartLoopsInWT.bat` через `LOOPER_ROOT`:
+  - PowerShell: `& "$env:LOOPER_ROOT\StartLoopsInWT.bat" "<ProjectPath>" "Workers\Worker_002"`
+  - cmd: `"%LOOPER_ROOT%\StartLoopsInWT.bat" "<ProjectPath>" "Workers\Worker_002"`
 Первый параметр - это путь до проекта, второй - название лупера. 
 Проектов в одном приложении может быть много (Пример вымышленный искать не нужно).
 Например, `c:\Minesweeper\.MigrationToIOs`  - Это проект миграции на iOs.
@@ -67,7 +71,8 @@ When an agent looper is no longer needed, stop it via inbox prompt command:
 
 1. Create local file with first line `/looper stop` (for example: `Temp\looper_stop.md`).
 2. Publish it to target sender inbox using helper script:
-   `py "C:\CorrisBot\Looper\create_prompt_file.py" create --inbox "Prompts\Inbox\<SenderID>" --from-file "Temp\looper_stop.md"`
+   - PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "Prompts\Inbox\<SenderID>" --from-file "Temp\looper_stop.md"`
+   - cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "Prompts\Inbox\<SenderID>" --from-file "Temp\looper_stop.md"`
 3. Ensure the first non-empty line is exactly:
    `/looper stop`
 4. Do not add any other command on that first line.
