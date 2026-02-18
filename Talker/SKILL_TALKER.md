@@ -26,4 +26,4 @@ These rules apply to agents that have Talker Skill but are not the default Talke
 
 # SKILL GATEWAY IO
 
-Read: `C:\CorrisBot\Looper\SKILL_GATEWAY_IO.md`
+Read: `../Looper/SKILL_GATEWAY_IO.md`

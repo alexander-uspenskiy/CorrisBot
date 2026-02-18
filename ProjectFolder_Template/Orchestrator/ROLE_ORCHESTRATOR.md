@@ -184,4 +184,4 @@
 
 # SKILL AGENT-RUNNER
 
-Read: `C:\CorrisBot\Looper\SKILL_AGENT_RUNNER.md`
+Read: `../../Looper/SKILL_AGENT_RUNNER.md`

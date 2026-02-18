@@ -32,12 +32,12 @@ Do not apply them to other loopers unless explicitly requested.
 
 # SKILL GATEWAY IO
 
-Read: `C:\CorrisBot\Looper\SKILL_GATEWAY_IO.md`
+Read: `../Looper/SKILL_GATEWAY_IO.md`
 
 
 # SKILL AGENT-RUNNER
 
-Read: `C:\CorrisBot\Looper\SKILL_AGENT_RUNNER.md`
+Read: `../Looper/SKILL_AGENT_RUNNER.md`
 
 
 # SKILL CREATE NEW PROJECT

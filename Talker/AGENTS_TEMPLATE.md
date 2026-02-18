@@ -8,7 +8,7 @@
 - Follow the full nested `Read:` chain recursively before processing the prompt.
 
 # Looper Base Rules
-- Read: `C:\CorrisBot\Looper\ROLE_LOOPER_BASE.md`
+- Read: `../Looper/ROLE_LOOPER_BASE.md`
 
 # ROLE TALKER
-- Read: `C:\CorrisBot\Talker\ROLE_TALKER.md`
+- Read: `./ROLE_TALKER.md`
