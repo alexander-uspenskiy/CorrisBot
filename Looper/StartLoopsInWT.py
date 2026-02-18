@@ -5,6 +5,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,8 @@ DEFAULT_LAYOUT: dict[str, Any] = {
     "tab_index_offset": 1,
     "state_subpath": "Temp\\wt_layout_state.json",
 }
+LOCK_TIMEOUT_SECONDS = 20.0
+LOCK_STALE_SECONDS = 120.0
 
 
 def now_iso() -> str:
@@ -287,6 +291,52 @@ def write_json_file(path: Path, payload: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
+def acquire_state_lock(
+    state_path: Path, timeout_seconds: float = LOCK_TIMEOUT_SECONDS
+) -> tuple[int, Path, str]:
+    lock_path = state_path.with_suffix(state_path.suffix + ".lock")
+    deadline = time.time() + max(0.1, timeout_seconds)
+
+    while True:
+        now = time.time()
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            lock_token = str(uuid.uuid4())
+            lock_payload = (
+                f"token={lock_token}\n"
+                f"pid={os.getpid()} acquired_at={now_iso()}\n"
+            )
+            os.write(fd, lock_payload.encode("utf-8", errors="replace"))
+            return fd, lock_path, lock_token
+        except FileExistsError:
+            try:
+                age = now - lock_path.stat().st_mtime
+                if age > LOCK_STALE_SECONDS:
+                    lock_path.unlink(missing_ok=True)
+                    continue
+            except FileNotFoundError:
+                continue
+
+            if now >= deadline:
+                raise RuntimeError(
+                    f"Timed out waiting for WT state lock: {lock_path}"
+                )
+            time.sleep(0.1)
+
+
+def release_state_lock(lock_fd: int, lock_path: Path, lock_token: str) -> None:
+    try:
+        os.close(lock_fd)
+    except Exception:
+        pass
+    try:
+        current = lock_path.read_text(encoding="utf-8", errors="replace")
+        if f"token={lock_token}" in current:
+            lock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def resolve_state_path(project_root: Path, state_subpath: str) -> Path:
     candidate = Path(state_subpath).expanduser()
     if candidate.is_absolute():
@@ -452,107 +502,111 @@ def main() -> int:
             )
         print("[warning] wt.exe was not found, running in dry-run with command preview only.")
 
-    process_lines = get_process_command_lines()
-    if test_agent_already_running(process_lines, project_root, agent_path, agent_dir):
-        print(f"[skip] Agent already running: {agent_path}")
-        return 0
+    lock_fd, lock_path, lock_token = acquire_state_lock(state_path)
+    try:
+        process_lines = get_process_command_lines()
+        if test_agent_already_running(process_lines, project_root, agent_path, agent_dir):
+            print(f"[skip] Agent already running: {agent_path}")
+            return 0
 
-    state = load_json_file(state_path)
-    state_tab_index_offset = parse_int_or_none(state.get("tab_index_offset"))
-    reset_due_to_layout = state and state_tab_index_offset != tab_index_offset
-    if reset_due_to_layout:
-        print("[info] Resetting stale WT layout state (tab_index_offset changed).")
-        slots: dict[str, dict[str, int]] = {}
-    else:
-        slots = normalize_state_slots(state.get("agent_slots"))
-    slots = prune_state_slots(slots, project_root, process_lines)
+        state = load_json_file(state_path)
+        state_tab_index_offset = parse_int_or_none(state.get("tab_index_offset"))
+        reset_due_to_layout = state and state_tab_index_offset != tab_index_offset
+        if reset_due_to_layout:
+            print("[info] Resetting stale WT layout state (tab_index_offset changed).")
+            slots: dict[str, dict[str, int]] = {}
+        else:
+            slots = normalize_state_slots(state.get("agent_slots"))
+        slots = prune_state_slots(slots, project_root, process_lines)
 
-    tab_counts = build_tab_counts(slots)
-    tab_index, pane_index = choose_target(tab_counts, max_panes)
+        tab_counts = build_tab_counts(slots)
+        tab_index, pane_index = choose_target(tab_counts, max_panes)
 
-    # Determine runner type (codex or kimi)
-    # Priority: CLI argument > config file > default
-    runner = args.runner or str(config_raw.get("runner", "codex")).lower()
-    if runner not in ("codex", "kimi"):
-        runner = "codex"
-    
-    loop_bat_name = "KimiLoop.bat" if runner == "kimi" else "CodexLoop.bat"
-    loop_bat_path = (SCRIPT_DIR / loop_bat_name).resolve()
-    if not loop_bat_path.is_file():
-        raise RuntimeError(f"{loop_bat_name} not found: {loop_bat_path}")
+        # Determine runner type (codex or kimi)
+        # Priority: CLI argument > config file > default
+        runner = args.runner or str(config_raw.get("runner", "codex")).lower()
+        if runner not in ("codex", "kimi"):
+            runner = "codex"
 
-    tab_label = f"{tab_name_prefix}-{tab_index + 1:02d}"
-    agent_label = agent_path.replace("\\", "/")
-    pane_title = f"{agent_label} [{project_tag}/{tab_label}]"
-    loop_cmd = get_loop_invocation(loop_bat_path, project_root, agent_path)
-    cmd_line = f"title {escape_for_cmd(pane_title)} && {loop_cmd}"
-    absolute_tab_index = tab_index + tab_index_offset
+        loop_bat_name = "KimiLoop.bat" if runner == "kimi" else "CodexLoop.bat"
+        loop_bat_path = (SCRIPT_DIR / loop_bat_name).resolve()
+        if not loop_bat_path.is_file():
+            raise RuntimeError(f"{loop_bat_name} not found: {loop_bat_path}")
 
-    if pane_index == 0:
-        wt_args = [
-            "-w",
-            window_name,
-            "new-tab",
-            "--title",
-            pane_title,
-            "--suppressApplicationTitle",
-            "cmd",
-            "/k",
-            cmd_line,
-        ]
-    else:
-        split_ops = get_split_operation_args(pane_index, pane_title, cmd_line)
-        wt_args_primary = prepend_window_and_tab_focus(window_name, split_ops, absolute_tab_index)
-        wt_args_active = prepend_window_and_tab_focus(window_name, split_ops, None)
-        wt_candidates_by_priority: list[tuple[str, list[str]]] = [("focused+offset", wt_args_primary)]
-        wt_candidates_by_priority.append(("active-tab", wt_args_active))
-        wt_args = wt_args_primary
+        tab_label = f"{tab_name_prefix}-{tab_index + 1:02d}"
+        agent_label = agent_path.replace("\\", "/")
+        pane_title = f"{agent_label} [{project_tag}/{tab_label}]"
+        loop_cmd = get_loop_invocation(loop_bat_path, project_root, agent_path)
+        cmd_line = f"title {escape_for_cmd(pane_title)} && {loop_cmd}"
+        absolute_tab_index = tab_index + tab_index_offset
 
-    print(f"Project root: {project_root}")
-    print(f"Agent path:   {agent_path}")
-    print(f"Window name:  {window_name}")
-    print(f"Target:       tab={tab_index + 1} (absolute {absolute_tab_index + 1}), pane={pane_index + 1}")
-    print(f"State file:   {state_path}")
+        if pane_index == 0:
+            wt_args = [
+                "-w",
+                window_name,
+                "new-tab",
+                "--title",
+                pane_title,
+                "--suppressApplicationTitle",
+                "cmd",
+                "/k",
+                cmd_line,
+            ]
+        else:
+            split_ops = get_split_operation_args(pane_index, pane_title, cmd_line)
+            wt_args_primary = prepend_window_and_tab_focus(window_name, split_ops, absolute_tab_index)
+            wt_args_active = prepend_window_and_tab_focus(window_name, split_ops, None)
+            wt_candidates_by_priority: list[tuple[str, list[str]]] = [("focused+offset", wt_args_primary)]
+            wt_candidates_by_priority.append(("active-tab", wt_args_active))
+            wt_args = wt_args_primary
 
-    if args.dry_run:
-        print("[dry-run] wt " + format_args_for_display(wt_args))
-        if pane_index > 0:
-            for label, candidate in wt_candidates_by_priority[1:]:
-                print(f"[dry-run] fallback({label}) wt " + format_args_for_display(candidate))
-        return 0
+        print(f"Project root: {project_root}")
+        print(f"Agent path:   {agent_path}")
+        print(f"Window name:  {window_name}")
+        print(f"Target:       tab={tab_index + 1} (absolute {absolute_tab_index + 1}), pane={pane_index + 1}")
+        print(f"State file:   {state_path}")
 
-    if pane_index == 0:
-        ok, err = run_wt_command(wt_args, wt_candidates, alias_available)
-        if not ok:
-            raise RuntimeError(f"Failed to start Windows Terminal: {err}")
-    else:
-        launch_errors: list[str] = []
-        launched = False
-        for label, candidate in wt_candidates_by_priority:
-            ok, err = run_wt_command(candidate, wt_candidates, alias_available)
-            if ok:
-                launched = True
-                if label != "focused+offset":
-                    print(f"[warning] Used fallback launch mode: {label}")
-                break
-            launch_errors.append(f"{label}: {err}")
-        if not launched:
-            raise RuntimeError("Failed to start Windows Terminal: " + " | ".join(launch_errors))
+        if args.dry_run:
+            print("[dry-run] wt " + format_args_for_display(wt_args))
+            if pane_index > 0:
+                for label, candidate in wt_candidates_by_priority[1:]:
+                    print(f"[dry-run] fallback({label}) wt " + format_args_for_display(candidate))
+            return 0
 
-    slots[agent_path] = {"tab_index": tab_index, "pane_index": pane_index}
-    write_json_file(
-        state_path,
-        {
-            "project_root": str(project_root),
-            "window_name": window_name,
-            "max_panes_per_tab": max_panes,
-            "tab_name_prefix": tab_name_prefix,
-            "tab_index_offset": tab_index_offset,
-            "agent_slots": slots,
-            "runner": runner,
-            "updated_at": now_iso(),
-        },
-    )
+        if pane_index == 0:
+            ok, err = run_wt_command(wt_args, wt_candidates, alias_available)
+            if not ok:
+                raise RuntimeError(f"Failed to start Windows Terminal: {err}")
+        else:
+            launch_errors: list[str] = []
+            launched = False
+            for label, candidate in wt_candidates_by_priority:
+                ok, err = run_wt_command(candidate, wt_candidates, alias_available)
+                if ok:
+                    launched = True
+                    if label != "focused+offset":
+                        print(f"[warning] Used fallback launch mode: {label}")
+                    break
+                launch_errors.append(f"{label}: {err}")
+            if not launched:
+                raise RuntimeError("Failed to start Windows Terminal: " + " | ".join(launch_errors))
+
+        slots[agent_path] = {"tab_index": tab_index, "pane_index": pane_index}
+        write_json_file(
+            state_path,
+            {
+                "project_root": str(project_root),
+                "window_name": window_name,
+                "max_panes_per_tab": max_panes,
+                "tab_name_prefix": tab_name_prefix,
+                "tab_index_offset": tab_index_offset,
+                "agent_slots": slots,
+                "runner": runner,
+                "updated_at": now_iso(),
+            },
+        )
+    finally:
+        release_state_lock(lock_fd, lock_path, lock_token)
     print(f"[ok] Launch command sent: {agent_path}")
     return 0
 
