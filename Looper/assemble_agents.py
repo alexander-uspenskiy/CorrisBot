@@ -35,19 +35,23 @@ def resolve(template: Path, seen: set[Path] | None = None) -> list[str]:
         sys.exit(3)
     seen.add(resolved)
 
-    if not template.exists():
+    if not resolved.exists():
         print(f"[ERROR] File not found: {template}", file=sys.stderr)
         sys.exit(2)
 
     lines: list[str] = []
-    for raw in template.read_text(encoding="utf-8").splitlines(keepends=True):
+    for raw in resolved.read_text(encoding="utf-8").splitlines(keepends=True):
         m = _READ_RE.match(raw.rstrip("\r\n"))
         if m:
             ref_path = Path(m.group(1))
+            if not ref_path.is_absolute():
+                ref_path = (resolved.parent / ref_path).resolve()
+            else:
+                ref_path = ref_path.resolve()
             if not ref_path.exists():
                 print(
                     f"[ERROR] Referenced file not found: {ref_path}  "
-                    f"(from {template})",
+                    f"(from {resolved})",
                     file=sys.stderr,
                 )
                 sys.exit(2)
