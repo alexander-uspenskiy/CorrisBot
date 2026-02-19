@@ -123,6 +123,16 @@ Option A (per-agent split files) is most robust against hacks and silent misconf
 
 ## 4. Recommended End-State Contract
 
+## 4.0 Runtime Root Discovery Contract
+
+To remove ambiguity, resolver must use one deterministic algorithm:
+
+1. Input: absolute `AgentDirectory`.
+2. Walk up parent directories from `AgentDirectory` until repository boundary.
+3. First directory containing `AgentRunner/model_registry.json` is selected as `<RuntimeRoot>`.
+4. If not found: hard error (`runtime_root_not_found`).
+5. All launcher/runtime/profile tools must call this same helper; no duplicated path logic.
+
 ## 4.1 File Layout
 
 For every agent directory (`Talker`, `Orchestrator`, `Workers/*`):
@@ -257,11 +267,14 @@ Precedence is field-specific and deterministic.
 1. Runner changes: apply only on next process launch.
 2. Model changes: apply on next process launch (same as runner for now).
 3. Codex `reasoning_effort`: may be reloaded per prompt cycle without restart.
+4. If process was started with CLI `--reasoning-effort`, CLI value is pinned for the process lifetime:
+   - profile hot-reload for `reasoning_effort` is ignored
+   - warning is written to runtime log.
 
 ## 4.7 Last-Known-Good Snapshot Contract
 
-1. Per runtime-root snapshot path:
-   - `<RuntimeRoot>/AgentRunner/last_known_good/`
+1. Per-agent snapshot path:
+   - `<AgentDirectory>/AgentRunner/last_known_good/`
 2. Snapshot set contains copies of:
    - `agent_runner.json`
    - `codex_profile.json`
@@ -274,6 +287,20 @@ Precedence is field-specific and deterministic.
    2. template defaults
 6. Self-heal log/audit must include restore source:
    - `restore_source=last_known_good|template_default`.
+
+## 4.8 Resolver -> Batch Bridge Contract
+
+To avoid brittle JSON parsing in `.bat`, add a lightweight resolver bridge CLI:
+
+1. Script contract:
+   - `resolve_agent_config.py --agent-dir <path> --format bat_env`
+2. Output contract:
+   - prints one `KEY=VALUE` per line for required launch fields only.
+   - minimum keys: `RUNNER`, `MODEL`, `REASONING_EFFORT`, `SOURCE_RUNNER`, `SOURCE_MODEL`, `SOURCE_REASONING`.
+3. Failure contract:
+   - non-zero exit code
+   - single-line machine-readable error code on stderr.
+4. `StartLoopsInWT.bat` and `run_gateway.bat` consume only this bridge output; no direct JSON parsing in batch files.
 
 ---
 
@@ -309,7 +336,8 @@ Strict preflight before runner switch:
 2. Orchestrator profile missing/broken:
    - Talker escalates to user and performs deterministic restore when unambiguous.
 3. Worker profile missing/broken:
-   - Orchestrator escalates, restores profile deterministically, retries launch.
+   - Orchestrator escalates, restores profile deterministically, and marks worker as `needs_relaunch`.
+   - Process relaunch is done by launch controller path (WT launcher/watchdog/manual operator), not by implicit in-process hot restart.
 4. Deterministic restore does not require separate user confirmation.
 5. Every restore writes:
    - runtime error log entry
@@ -358,6 +386,7 @@ Exit gate:
 Tasks:
 1. Introduce one shared module (single source of truth) for:
    - agent path normalization
+   - runtime-root discovery (section 4.0 contract)
    - profile loading
    - registry loading
    - validation
@@ -366,9 +395,13 @@ Tasks:
    - effective `runner/model/reasoning`
    - `source` map for each field (`cli/profile/backend-default`).
 3. Add deterministic error codes/messages.
+4. Add lightweight bridge CLI for batch launchers:
+   - `resolve_agent_config.py --agent-dir <path> --format bat_env`
+   - stable key/value output for `.bat` consumers.
 
 Exit gate:
 1. No duplicated config resolution logic in launcher/runtime.
+2. Batch launchers consume resolver bridge output without JSON parsing.
 
 ## Phase 3: Launcher Integration (`StartLoopsInWT`)
 
@@ -383,6 +416,7 @@ Tasks:
    - `start_loops_sequential.py`
 6. Migrate Gateway Talker boot path to the same resolver contract:
    - `Gateways/Telegram/run_gateway.bat` must resolve Talker runner/profile from Talker runtime root, not from `loops.wt.json.runner`.
+   - integration must use resolver bridge CLI (`--format bat_env`) only.
 7. Extend dry-run output with effective resolved config + source.
 
 Exit gate:
@@ -446,12 +480,19 @@ Required tests:
 
 3. Runtime:
    - codex reasoning hot-reload
+   - CLI `--reasoning-effort` pins value; profile hot-reload ignored with warning
    - runner change not hot-applied (warning only)
    - deterministic self-heal restore writes audit record (`action=self_heal_restore`)
    - deterministic self-heal restore uses `last_known_good` first, template fallback second
    - lock contention during profile write is handled deterministically (no partial writes).
+   - concurrent read/write race (looper reading while orchestrator writes) has no partial/invalid read result.
+   - snapshot isolation: profile update for one worker does not alter another worker snapshot.
 
-4. Bootstrap:
+4. Path resolution:
+   - runtime-root discovery from different agent depths (Talker, Orchestrator, nested Worker) resolves correct registry root.
+   - missing `AgentRunner/model_registry.json` on parent chain returns deterministic hard error.
+
+5. Bootstrap:
    - new project contains orchestrator profile + registry
    - new worker contains worker profile files.
    - Talker runtime root contains local registry/profile files.
@@ -569,7 +610,8 @@ Mitigations injected into plan:
 3. Launcher integration changes (`StartLoopsInWT.py/.bat`, `start_loops_sequential.py`, `Gateways/Telegram/run_gateway.bat`, and related help text).
 4. Runtime integration changes (`codex_prompt_fileloop.py`, `agent_runners.py` as needed).
 5. Profile helper script(s) for deterministic mutation.
-6. Last-known-good snapshot mechanism under `<RuntimeRoot>/AgentRunner/last_known_good/`.
+6. Last-known-good snapshot mechanism with per-agent location:
+   - `<AgentDirectory>/AgentRunner/last_known_good/`.
 7. Updated instructions:
    - `Talker/ROLE_TALKER.md`
    - `ProjectFolder_Template/Orchestrator/ROLE_ORCHESTRATOR.md`
