@@ -8,7 +8,7 @@ Migrate CorrisBot from global launch-time runner selection to deterministic per-
 
 Scope includes Talker, Orchestrator, and Workers.
 
-This document is implementation-ready for Orchestrator + Workers, but not over-prescriptive at single-line coding level.
+This document is implementation-ready for Talker + Orchestrator + Workers, but not over-prescriptive at single-line coding level.
 
 ---
 
@@ -159,16 +159,19 @@ Runtime-root level:
 {
   "version": 1,
   "codex": {
+    "default_model": "codex-5.3",
     "models": ["codex-5.3", "codex-5.3-mini"],
     "reasoning_effort": ["low", "medium", "high"]
   },
   "kimi": {
+    "default_model": "kimi-k2",
     "models": ["kimi-k2"]
   }
 }
 ```
 
 Note: values above are examples; actual list must be curated in template and updated by process.
+`default_model` is mandatory for each backend and must be present in its `models` list.
 
 ## 4.2 Explicit Precedence (required)
 
@@ -263,11 +266,13 @@ Precedence is field-specific and deterministic.
    - `agent_runner.json`
    - `codex_profile.json`
    - `kimi_profile.json`
-3. Snapshot is updated only after successful validation and successful write/apply operation.
-4. Self-heal restore order:
+3. Snapshot is updated only after successful validation and successful atomic write.
+4. Snapshot update does not wait for launch-bound runtime apply (`runner`/`model`).
+   - launch-bound apply status is tracked separately in runtime logs.
+5. Self-heal restore order:
    1. `last_known_good` snapshot
    2. template defaults
-5. Self-heal log/audit must include restore source:
+6. Self-heal log/audit must include restore source:
    - `restore_source=last_known_good|template_default`.
 
 ---
@@ -284,6 +289,7 @@ Hard error (no launch) if:
 5. `model` not in runtime-root registry for active backend.
 6. CLI/profile field is incompatible with active runner (for known fields).
 7. `reasoning_effort` is provided with invalid type/value for Codex allowlist.
+8. Registry backend block is invalid (`default_model` missing or not present in backend `models`).
 
 ## 5.2 Soft Errors
 
@@ -338,7 +344,7 @@ Tasks:
 2. Add Talker profile files in `Talker/`.
 3. Add Talker local registry file:
    - `Talker/AgentRunner/model_registry.json`
-   - same contract as project registry.
+   - same schema as runtime-root registry contract.
 4. Update scaffold scripts:
    - `CreateProjectStructure.bat` to create/copy project registry and Orchestrator profile files.
    - `CreateWorkerStructure.bat` to copy worker profile files.
@@ -427,6 +433,7 @@ Required tests:
    - model not in registry
    - precedence correctness.
    - invalid `reasoning_effort` type/value -> hard error.
+   - invalid registry backend block (`default_model` missing or not in `models`) -> hard error.
    - backend capability branch:
      - `supports_runtime_model_override=false` + CLI `--model` mismatch -> hard error
      - `supports_runtime_model_override=false` + CLI `--model` equals registry default -> allowed.
