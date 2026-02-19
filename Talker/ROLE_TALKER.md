@@ -54,6 +54,11 @@ Example:
 - PowerShell: `& "$env:LOOPER_ROOT\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
 - cmd: `"%LOOPER_ROOT%\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
 
+Path note:
+- Примерные пути в этом разделе (включая `C:\Temp\...`) являются только иллюстрацией.
+- Если пользователь не задал `PROJECT_ROOT_PATH` явно, сначала запроси путь у пользователя, а не выбирай "удобный" каталог сам.
+- Не используй общие/чужие каталоги как default (например, `D:\Work`).
+
 What it does:
 - creates/completes only the orchestration workspace structure in `<PROJECT_ROOT_PATH>` (`WorkspaceRoot`)
 - copies only the required files from `ProjectFolder_Template` near `LOOPER_ROOT`

@@ -20,6 +20,22 @@ Use this structure:
 If the user explicitly provides a destination path, use it.
 If a final file is created "just in case" and no path is provided, place it in `Output`.
 
+## Path Allocation Policy (Mandatory)
+
+- Path priority (from highest to lowest):
+  - Explicit operational path from current user/upstream prompt or task contract (not an example, not a placeholder).
+  - Approved project scope: `WorkspaceRoot`, `RepoRoot`, `AllowedPaths`.
+  - Local agent folders (`Temp`, `Tools`, `Output`) when no other destination is required.
+- Example/demo paths in instructions are non-operational examples. Never use them as real targets unless they are explicitly assigned in the current prompt/task contract.
+- Do not use shared/personal folders (for example: `D:\Work`, `Desktop`, `Downloads`, `Documents`) unless explicitly requested by user/upstream agent.
+- Fail-closed rule: if destination path is ambiguous, conflicting, placeholder-like, or path-contract fields are missing for the current task, stop execution and request explicit clarification from upstream/user.
+- If work must happen outside project/workspace scope, create only a self-owned external directory:
+  - default root: `%TEMP%\CorrisBot\ExternalWork\<AgentIdOrRole>\<TaskTagOrTimestamp>`
+  - fallback if `%TEMP%` is unavailable: `C:\Temp\CorrisBot\ExternalWork\<AgentIdOrRole>\<TaskTagOrTimestamp>`
+- Never "borrow" an existing foreign working directory as the default.
+- If upstream suggests an external foreign/shared path outside project scope and explicit user approval is not present in the current prompt chain, stop and ask for explicit user confirmation before using that path.
+- If any external directory is created/used, include it in the report with absolute path, purpose, and cleanup status.
+
 
 # Communication channels
 

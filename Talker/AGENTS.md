@@ -20,6 +20,22 @@ Use this structure:
 If the user explicitly provides a destination path, use it.
 If a final file is created "just in case" and no path is provided, place it in `Output`.
 
+## Path Allocation Policy (Mandatory)
+
+- Path priority (from highest to lowest):
+  - Explicit operational path from current user/upstream prompt or task contract (not an example, not a placeholder).
+  - Approved project scope: `WorkspaceRoot`, `RepoRoot`, `AllowedPaths`.
+  - Local agent folders (`Temp`, `Tools`, `Output`) when no other destination is required.
+- Example/demo paths in instructions are non-operational examples. Never use them as real targets unless they are explicitly assigned in the current prompt/task contract.
+- Do not use shared/personal folders (for example: `D:\Work`, `Desktop`, `Downloads`, `Documents`) unless explicitly requested by user/upstream agent.
+- Fail-closed rule: if destination path is ambiguous, conflicting, placeholder-like, or path-contract fields are missing for the current task, stop execution and request explicit clarification from upstream/user.
+- If work must happen outside project/workspace scope, create only a self-owned external directory:
+  - default root: `%TEMP%\CorrisBot\ExternalWork\<AgentIdOrRole>\<TaskTagOrTimestamp>`
+  - fallback if `%TEMP%` is unavailable: `C:\Temp\CorrisBot\ExternalWork\<AgentIdOrRole>\<TaskTagOrTimestamp>`
+- Never "borrow" an existing foreign working directory as the default.
+- If upstream suggests an external foreign/shared path outside project scope and explicit user approval is not present in the current prompt chain, stop and ask for explicit user confirmation before using that path.
+- If any external directory is created/used, include it in the report with absolute path, purpose, and cleanup status.
+
 
 # Communication channels
 
@@ -190,6 +206,11 @@ When a prompt contains a valid `Reply-To:` block, use deterministic helper `send
 > Если задача допускает параллельное выполнение нескольких подзадач — создавай нескольких исполнителей.
 > Для последовательного старта нескольких луперов используй `start_loops_sequential.py` (не ad-hoc набор отдельных команд).
 
+Path note:
+- Все пути в примерах этого skill являются демонстрационными.
+- Не используй примерный путь как рабочий default, если он не задан явно в текущем task contract/пользовательском запросе.
+- Для внешних рабочих каталогов следуй `Path Allocation Policy` из `ROLE_LOOPER_BASE`.
+
 # Создание структуры файлов агента лупера
 - Выбираем название агенту. Должно быть простым, совместимым с файловой системой.
 - Сначала создается структура файлов для работы лупера:
@@ -285,6 +306,11 @@ Commands:
 Example:
 - PowerShell: `& "$env:LOOPER_ROOT\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
 - cmd: `"%LOOPER_ROOT%\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
+
+Path note:
+- Примерные пути в этом разделе (включая `C:\Temp\...`) являются только иллюстрацией.
+- Если пользователь не задал `PROJECT_ROOT_PATH` явно, сначала запроси путь у пользователя, а не выбирай "удобный" каталог сам.
+- Не используй общие/чужие каталоги как default (например, `D:\Work`).
 
 What it does:
 - creates/completes only the orchestration workspace structure in `<PROJECT_ROOT_PATH>` (`WorkspaceRoot`)

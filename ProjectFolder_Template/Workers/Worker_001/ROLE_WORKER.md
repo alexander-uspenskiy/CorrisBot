@@ -30,6 +30,17 @@
   - `git init` разрешен только если это явно указано Оркестратором в task contract;
   - без явного разрешения на инициализацию считай поведение таким же, как для `shared`.
 
+## Path Execution Contract (Mandatory)
+- В каждой задаче ориентируйся на path-поля task contract от Оркестратора: `WorkspaceRoot`, `RepoRoot`, `AllowedPaths`, `ExternalPathPolicy`, `ExternalWorkRoot`, `UserApprovedExternalPaths`, `UserApprovalRef`.
+- Fail-closed: если любой обязательный path-параметр отсутствует/неоднозначен, немедленно остановись и запроси уточнение у Оркестратора.
+- Примерные пути из инструкций/примеров не являются рабочими назначениями.
+- Не используй общие или "чужие" каталоги (например, `D:\Work`, `Desktop`, `Downloads`, `Documents`) без явного разрешения в task contract.
+- Если нужен путь вне `WorkspaceRoot/RepoRoot/AllowedPaths`:
+  - при `ExternalPathPolicy=forbidden` остановись и эскалируй Оркестратору;
+  - при `ExternalPathPolicy=self-owned-only` используй только self-owned подкаталог внутри `ExternalWorkRoot`;
+  - при `ExternalPathPolicy=user-approved` используй только пути из `UserApprovedExternalPaths`, и только если `UserApprovalRef` не `none`.
+- Не "занимай" существующий чужой рабочий каталог как default.
+
 ## Delivery Contract (Mandatory)
 - Отчет Оркестратору отправляется отдельным новым `Prompt_*.md` в его inbox (по `Reply-To` из входящего prompt).
 - Нельзя считать, что Оркестратор сам прочитает твой `*_Result.md`. Это внутренний run-log, а не транспорт межлуперного ответа.
@@ -52,6 +63,9 @@
   - `git status --short` после изменений;
   - commit hash итогового коммита (или reason, почему commit не создан по `CommitPolicy`);
   - список файлов из последнего коммита.
+- В отчете обязательно приложи секцию `External Paths Created`:
+  - если внешние каталоги не использовались: явно указать `none`;
+  - если использовались: для каждого абсолютный путь, цель использования, cleanup status.
 
 ## Completion Rule
 - После завершения работ (или при необходимости уточнения) обязательно сформируй и отправь prompt Оркестратору в том же turn.
