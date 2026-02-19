@@ -295,8 +295,11 @@ To avoid brittle JSON parsing in `.bat`, add a lightweight resolver bridge CLI:
 1. Script contract:
    - `resolve_agent_config.py --agent-dir <path> --format bat_env`
 2. Output contract:
-   - prints one `KEY=VALUE` per line for required launch fields only.
+   - prints one CMD-ready line `set "KEY=VALUE"` per line for required launch fields only.
    - minimum keys: `RUNNER`, `MODEL`, `REASONING_EFFORT`, `SOURCE_RUNNER`, `SOURCE_MODEL`, `SOURCE_REASONING`.
+   - output values are ASCII and must be CMD-safe:
+     - current allowed charset: `[A-Za-z0-9._-]`
+     - if future value contains other characters, bridge must escape/encode before emitting batch lines.
 3. Failure contract:
    - non-zero exit code
    - single-line machine-readable error code on stderr.
