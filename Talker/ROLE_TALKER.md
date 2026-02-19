@@ -55,10 +55,15 @@ Example:
 - cmd: `"%LOOPER_ROOT%\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
 
 What it does:
-- creates/completes the structure in `<PROJECT_ROOT_PATH>`
+- creates/completes only the orchestration workspace structure in `<PROJECT_ROOT_PATH>` (`WorkspaceRoot`)
 - copies only the required files from `ProjectFolder_Template` near `LOOPER_ROOT`
 - does not overwrite existing files
+- does not initialize Git for the implementation project/repository
 
+Workspace/Repo split policy:
+- `WorkspaceRoot` (created by `CreateProjectStructure.bat`) is for Orchestrator/Workers prompts, plans and run-flow.
+- `ImplementationRoot`/`RepoRoot` (real project code repository) is a separate path and is not bootstrapped by Talker at this step.
+- Git bootstrap for `ImplementationRoot` is executed by Orchestrator via `EnsureRepo.bat` after the user provides the implementation path.
 
 ## RUN ORCHESTRATOR 
 
