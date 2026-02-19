@@ -4,6 +4,6 @@
   "max_panes_per_tab": 4,
   "tab_index_offset": 1,
   "state_subpath": "Temp\\wt_layout_state.json",
-  "runner": "kimi",
+  "runner": "codex",
   "_runner_help": "CLI agent backend: 'codex' (OpenAI Codex CLI) or 'kimi' (Kimi Code CLI). Can be overridden per-agent via --runner argument."
 }
