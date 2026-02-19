@@ -307,26 +307,26 @@ Workspace/Repo split policy:
 - `<PROJECT_ROOT_PATH>` - это корневой каталог проекта (например `C:\Temp\.TestProject`).
 - Если пользователь просит запустить оркестратор - запускать запрошенный. Подразумевается, что стуктура уже создана.
 Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.
-- Передача задач оркестратору делается через файловый prompt в его inbox по общему правилу луперов (см. `../Looper/ROLE_LOOPER_BASE.md`):
-  - целевой каталог обычно: `<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker`
-  - prompt-файл создавай helper-скриптом:
-    - PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker" --from-file "<LocalPromptFile.md>"`
-    - cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<PROJECT_ROOT_PATH>\Orchestrator\Prompts\Inbox\Talker" --from-file "<LocalPromptFile.md>"`
+- Передача задач оркестратору делается через единый deterministic helper:
+  - скрипт: `send_orchestrator_handoff.py` (в каталоге `LOOPER_ROOT`)
+  - скрипт сам выполняет весь маршрут: `ensure/create inbox -> build handoff markdown -> create prompt via create_prompt_file.py -> verify file exists`
+  - перед запуском сохрани исходный текст пользователя в локальный файл (`<LocalUserMessageFile.md>`) без переформулировки
+  - первый prompt в проектной сессии (включить `Reply-To`):
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+  - последующие prompt в той же проектной сессии (без повторной фиксации маршрута):
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+  - при успехе скрипт возвращает JSON с `delivered_file`; используй его как источник истины для подтверждения отправки.
 - Для отчетов оркестратора в Talker используй проектно-уникальный SenderID (а не просто `Orchestrator`), например:
   - `Orc_<ProjectTag>` (пример: `Orc_TestProject`)
 - `ProjectTag` определяй детерминированно: это имя конечного каталога из `<PROJECT_ROOT_PATH>`.
   - пример: для `C:\Temp\.TestProject` использовать `ProjectTag=.TestProject`
 - Для выбранного проекта используй один и тот же `ProjectTag` и, соответственно, один и тот же `SenderID` во всех дальнейших сообщениях.
 - В ПЕРВОМ prompt к оркестратору по выбранному проекту обязательно явно передавай маршрут обратной связи (`Reply-To`) и фиксируй, что он действует на всю текущую проектную сессию.
-  - Передавай `Reply-To` как структурированный блок (а не в свободной форме), например:
-    - `Reply-To:`
-    - `- InboxPath: $env:TALKER_ROOT\Prompts\Inbox\Orc_<ProjectTag>` (PowerShell)
-    - `- InboxPath: %TALKER_ROOT%\Prompts\Inbox\Orc_<ProjectTag>` (cmd)
-    - `- SenderID: Orc_<ProjectTag>`
-    - `- FilePattern: Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`
-    - `- Scope: use this Reply-To for all further reports/questions in this project session until Talker sends updated Reply-To`
+  - `Reply-To` формируй через `send_orchestrator_handoff.py --include-reply-to` (не вручную).
   - Этот блок обязателен для первого сообщения в проектной сессии и при явной смене маршрута.
-  - Если маршрут не менялся, не дублируй `Reply-To` в каждом следующем prompt.
+  - Если маршрут не менялся, используй `send_orchestrator_handoff.py --omit-reply-to` и не дублируй `Reply-To` в каждом следующем prompt.
 - VERBATIM handoff contract (User -> Internal Agent):
   - Если пользователь просит "передай/перешли/сообщи" внутреннему агенту (например, Orchestrator), передавай текст пользователя ДОСЛОВНО.
   - Запрещено пересказывать, "оформлять ТЗ", структурировать за пользователя, сокращать, "улучшать формулировку", менять пути/имена/числа.
