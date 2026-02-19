@@ -91,23 +91,6 @@ if not exist "%DEST_ROOT%\.gitignore" (
   )
 )
 
-if not exist "%DEST_ROOT%\.git\" (
-  pushd "%DEST_ROOT%"
-  git init >nul 2>&1 || (
-    echo Failed to initialize git repository
-    popd
-    exit /b 10
-  )
-  git add . >nul 2>&1
-  git commit -m "Initial project structure" >nul 2>&1 || (
-    echo Failed to create initial git commit
-    popd
-    exit /b 11
-  )
-  popd
-  echo Git repository initialized: "%DEST_ROOT%"
-)
-
 echo Project structure ensured successfully: "%DEST_PROJECT_ROOT%"
 exit /b 0
 
