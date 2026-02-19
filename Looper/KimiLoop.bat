@@ -13,7 +13,7 @@ chcp 65001 >nul 2>&1
 set PYTHONIOENCODING=utf-8
 
 if "%~1"=="" (
-  echo Usage: %~nx0 ^<project_root^> [agent_path]
+  echo Usage: %~nx0 ^<project_root^> [agent_path] [extra_args]
   echo Example: %~nx0 "%REPO_ROOT%\Talker"
   echo [PATHS] REPO_ROOT=%REPO_ROOT%
   echo [PATHS] LOOPER_ROOT=%LOOPER_ROOT%
@@ -42,6 +42,10 @@ set "AGENT_DIR=%PROJECT_ROOT%"
 if /I not "%AGENT_PATH%"=="." set "AGENT_DIR=%PROJECT_ROOT%\%AGENT_PATH%"
 set "TALKER_ROUTING_FLAG="
 if exist "%AGENT_DIR%\ROLE_TALKER.md" set "TALKER_ROUTING_FLAG=--talker-routing"
+set "EXTRA_ARGS="
+shift
+shift
+set "EXTRA_ARGS=%*"
 
-py -3 .\codex_prompt_fileloop.py --project-root "%PROJECT_ROOT%" --agent-path "%AGENT_PATH%" --runner kimi %TALKER_ROUTING_FLAG%
+py -3 .\codex_prompt_fileloop.py --project-root "%PROJECT_ROOT%" --agent-path "%AGENT_PATH%" --runner kimi %TALKER_ROUTING_FLAG% %EXTRA_ARGS%
 pause

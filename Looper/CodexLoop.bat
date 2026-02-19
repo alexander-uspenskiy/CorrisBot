@@ -13,9 +13,10 @@ rem Legacy launch (PowerShell):
 rem pwsh -ExecutionPolicy Bypass -File .\codex_prompt_fileloop.ps1
 
 if "%~1"=="" (
-  echo Usage: %~nx0 ^<project_root^> [agent_path]
+  echo Usage: %~nx0 ^<project_root^> [agent_path] [extra_args]
   echo Example 1: %~nx0 "%TEMPLATE_ROOT%" Workers\Worker_001
   echo Example 2: %~nx0 "%REPO_ROOT%\Talker"
+  echo Example 3: %~nx0 "%REPO_ROOT%\Talker" . --reasoning-effort high
   echo [PATHS] REPO_ROOT=%REPO_ROOT%
   echo [PATHS] LOOPER_ROOT=%LOOPER_ROOT%
   echo [PATHS] TEMPLATE_ROOT=%TEMPLATE_ROOT%
@@ -43,6 +44,10 @@ set "AGENT_DIR=%PROJECT_ROOT%"
 if /I not "%AGENT_PATH%"=="." set "AGENT_DIR=%PROJECT_ROOT%\%AGENT_PATH%"
 set "TALKER_ROUTING_FLAG="
 if exist "%AGENT_DIR%\ROLE_TALKER.md" set "TALKER_ROUTING_FLAG=--talker-routing"
+set "EXTRA_ARGS="
+shift
+shift
+set "EXTRA_ARGS=%*"
 
-py -3 .\codex_prompt_fileloop.py --project-root "%PROJECT_ROOT%" --agent-path "%AGENT_PATH%" --runner codex --dangerously-bypass-sandbox %TALKER_ROUTING_FLAG%
+py -3 .\codex_prompt_fileloop.py --project-root "%PROJECT_ROOT%" --agent-path "%AGENT_PATH%" --runner codex --dangerously-bypass-sandbox %TALKER_ROUTING_FLAG% %EXTRA_ARGS%
 pause

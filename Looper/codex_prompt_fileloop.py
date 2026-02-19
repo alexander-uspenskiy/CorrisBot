@@ -1114,11 +1114,19 @@ def parse_args() -> argparse.Namespace:
         help="CLI agent backend to use (default: codex).",
     )
     parser.add_argument(
+        "--reasoning-effort",
+        choices=["low", "medium", "high"],
+        help="Per-call reasoning override for Codex only.",
+    )
+    parser.add_argument(
         "--talker-routing",
         action="store_true",
         help="Enable Talker-only routing_state/user_sender_id relay contract for this loop.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.reasoning_effort and args.runner != "codex":
+        parser.error("--reasoning-effort is supported only for runner=codex")
+    return args
 
 
 def main() -> int:
@@ -1152,6 +1160,7 @@ def main() -> int:
             approval_policy=args.approval,
             web_search_enabled=args.allow_web_search,
             dangerously_bypass_sandbox=args.dangerously_bypass_sandbox,
+            reasoning_effort=args.reasoning_effort,
         )
     elif args.runner == "kimi":
         # KimiRunner добавляется на Этапе 3. До реализации --runner kimi даст ImportError.

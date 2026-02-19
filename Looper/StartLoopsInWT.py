@@ -224,8 +224,16 @@ def format_args_for_display(args: list[str]) -> str:
     return " ".join(parts)
 
 
-def get_loop_invocation(loop_bat_path: Path, project_root: Path, agent_path: str) -> str:
-    return f'"{loop_bat_path}" "{project_root}" "{agent_path}"'
+def get_loop_invocation(
+    loop_bat_path: Path,
+    project_root: Path,
+    agent_path: str,
+    reasoning_effort: str | None = None,
+) -> str:
+    cmd = f'"{loop_bat_path}" "{project_root}" "{agent_path}"'
+    if reasoning_effort:
+        cmd += f" --reasoning-effort {reasoning_effort}"
+    return cmd
 
 
 def escape_for_cmd(text: str) -> str:
@@ -439,7 +447,7 @@ def run_wt_command(
     return False, " | ".join(errors)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     parser = argparse.ArgumentParser(description="Launch one looper in Windows Terminal with dynamic pane allocation.")
     parser.add_argument("project_root", help="Path to project root directory.")
     parser.add_argument("agent_path", help="Agent path relative to project root (for example, Workers\\Worker_001).")
@@ -451,11 +459,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print command without launching WT.")
     parser.add_argument("--runner", default=None, choices=["codex", "kimi"],
                         help="CLI agent backend: codex (default) or kimi.")
-    return parser.parse_args()
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=["low", "medium", "high"],
+        help="Per-call reasoning override for Codex runner.",
+    )
+    return parser, parser.parse_args()
 
 
 def main() -> int:
-    args = parse_args()
+    parser, args = parse_args()
 
     project_root = resolve_project_root(args.project_root)
     if not project_root.is_dir():
@@ -474,6 +487,13 @@ def main() -> int:
     layout: dict[str, Any] = dict(DEFAULT_LAYOUT)
     for key, value in config_raw.items():
         layout[key] = value
+    # Determine runner type (codex or kimi)
+    # Priority: CLI argument > config file > default
+    runner = args.runner or str(config_raw.get("runner", "codex")).lower()
+    if runner not in ("codex", "kimi"):
+        runner = "codex"
+    if args.reasoning_effort and runner != "codex":
+        parser.error("--reasoning-effort is supported only for runner=codex")
 
     project_tag = get_project_tag(project_root)
     window_template = str(layout.get("window_name_template", DEFAULT_LAYOUT["window_name_template"]))
@@ -522,12 +542,6 @@ def main() -> int:
         tab_counts = build_tab_counts(slots)
         tab_index, pane_index = choose_target(tab_counts, max_panes)
 
-        # Determine runner type (codex or kimi)
-        # Priority: CLI argument > config file > default
-        runner = args.runner or str(config_raw.get("runner", "codex")).lower()
-        if runner not in ("codex", "kimi"):
-            runner = "codex"
-
         loop_bat_name = "KimiLoop.bat" if runner == "kimi" else "CodexLoop.bat"
         loop_bat_path = (SCRIPT_DIR / loop_bat_name).resolve()
         if not loop_bat_path.is_file():
@@ -536,7 +550,12 @@ def main() -> int:
         tab_label = f"{tab_name_prefix}-{tab_index + 1:02d}"
         agent_label = agent_path.replace("\\", "/")
         pane_title = f"{agent_label} [{project_tag}/{tab_label}]"
-        loop_cmd = get_loop_invocation(loop_bat_path, project_root, agent_path)
+        loop_cmd = get_loop_invocation(
+            loop_bat_path,
+            project_root,
+            agent_path,
+            reasoning_effort=args.reasoning_effort,
+        )
         cmd_line = f"title {escape_for_cmd(pane_title)} && {loop_cmd}"
         absolute_tab_index = tab_index + tab_index_offset
 

@@ -113,11 +113,13 @@ class CodexRunner(AgentRunner):
         approval_policy: str = "never",
         web_search_enabled: bool = False,
         dangerously_bypass_sandbox: bool = True,
+        reasoning_effort: Optional[str] = None,
     ):
         self.sandbox_mode = sandbox_mode
         self.approval_policy = approval_policy
         self.web_search_enabled = web_search_enabled
         self.dangerously_bypass_sandbox = dangerously_bypass_sandbox
+        self.reasoning_effort = reasoning_effort
         self._codex_bin_hint = codex_bin  # сохраняем hint до вызова resolve
         self._executable = self.resolve_executable()
 
@@ -169,6 +171,8 @@ class CodexRunner(AgentRunner):
             base_cmd.extend(["-a", self.approval_policy, "-s", self.sandbox_mode])
         if not self.web_search_enabled:
             base_cmd.extend(["-c", "tools.web_search=false"])
+        if self.reasoning_effort:
+            base_cmd.extend(["-c", f"model_reasoning_effort={self.reasoning_effort}"])
         if session_id:
             cmd = base_cmd + ["exec", "resume", session_id, "--skip-git-repo-check", "--json", "-"]
         else:
