@@ -77,7 +77,7 @@ if not exist "%DEST_ROOT%\Prompts\Inbox\%ORCHESTRATOR_NAME%\" (
   )
 )
 
-for %%F in (Info.md ROLE_WORKER.md) do (
+for %%F in (Info.md ROLE_WORKER.md agent_runner.json codex_profile.json kimi_profile.json) do (
   if not exist "%SOURCE_ROOT%\%%F" (
     echo Missing required source file: "%SOURCE_ROOT%\%%F"
     exit /b 7

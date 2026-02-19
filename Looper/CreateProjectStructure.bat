@@ -35,7 +35,7 @@ if not exist "%DEST_PROJECT_ROOT%\" (
   )
 )
 
-for %%D in ("" "Workers" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox" "Orchestrator\Prompts\Inbox\Talker") do (
+for %%D in ("" "Workers" "Orchestrator" "Temp" "AgentRunner" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox" "Orchestrator\Prompts\Inbox\Talker") do (
   if not exist "%TEMPLATE_ROOT%\%%~D\" (
     echo Missing required source directory: "%TEMPLATE_ROOT%\%%~D"
     exit /b 4
@@ -48,7 +48,7 @@ for %%D in ("" "Workers" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestrat
   )
 )
 
-for %%F in (Info.md ROLE_ORCHESTRATOR.md) do (
+for %%F in (Info.md ROLE_ORCHESTRATOR.md agent_runner.json codex_profile.json kimi_profile.json) do (
   if not exist "%TEMPLATE_ROOT%\Orchestrator\%%F" (
     echo Missing required source file: "%TEMPLATE_ROOT%\Orchestrator\%%F"
     exit /b 6
@@ -56,6 +56,19 @@ for %%F in (Info.md ROLE_ORCHESTRATOR.md) do (
   if not exist "%DEST_ROOT%\Orchestrator\%%F" (
     copy /Y "%TEMPLATE_ROOT%\Orchestrator\%%F" "%DEST_ROOT%\Orchestrator\%%F" >nul || (
       echo Failed to copy file: "%TEMPLATE_ROOT%\Orchestrator\%%F"
+      exit /b 7
+    )
+  )
+)
+
+for %%F in (model_registry.json) do (
+  if not exist "%TEMPLATE_ROOT%\AgentRunner\%%F" (
+    echo Missing required source file: "%TEMPLATE_ROOT%\AgentRunner\%%F"
+    exit /b 6
+  )
+  if not exist "%DEST_ROOT%\AgentRunner\%%F" (
+    copy /Y "%TEMPLATE_ROOT%\AgentRunner\%%F" "%DEST_ROOT%\AgentRunner\%%F" >nul || (
+      echo Failed to copy file: "%TEMPLATE_ROOT%\AgentRunner\%%F"
       exit /b 7
     )
   )
@@ -69,7 +82,7 @@ if not exist "%DEST_ROOT%\Orchestrator\AGENTS.md" (
   )
 )
 
-for %%D in ("" "Workers" "Orchestrator" "Temp" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox\Talker") do (
+for %%D in ("" "Workers" "Orchestrator" "Temp" "AgentRunner" "Orchestrator\Output" "Orchestrator\Prompts" "Orchestrator\Temp" "Orchestrator\Tools" "Orchestrator\Prompts\Inbox\Talker") do (
   for %%N in (Info.md .Info.md) do (
     if exist "%TEMPLATE_ROOT%\%%~D\%%N" (
       if not exist "%DEST_ROOT%\%%~D\%%N" (

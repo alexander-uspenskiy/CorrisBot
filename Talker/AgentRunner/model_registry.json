@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "codex": {
+    "default_model": "codex-5.3",
+    "models": ["codex-5.3", "codex-5.3-mini"],
+    "reasoning_effort": ["low", "medium", "high"]
+  },
+  "kimi": {
+    "default_model": "kimi-k2",
+    "models": ["kimi-k2"]
+  }
+}
