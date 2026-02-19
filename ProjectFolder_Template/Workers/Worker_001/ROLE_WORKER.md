@@ -21,6 +21,15 @@
 - Делать коммиты при изменениях. Используются как точки сохранения.
 - По-умолчанию работать в текущей ветке проекта.
 
+## Git Execution Contract (Mandatory)
+- В каждой задаче ориентируйся на Git-поля task contract от Оркестратора: `RepoRoot`, `RepoMode`, `AllowedPaths`, `CommitPolicy`.
+- `RepoMode=shared`:
+  - запрещено выполнять `git init` (или любую авто-инициализацию нового репозитория) в `RepoRoot`;
+  - если репозиторий отсутствует/недоступен, немедленно эскалируй Оркестратору и останови реализацию до его решения.
+- `RepoMode=isolated`:
+  - `git init` разрешен только если это явно указано Оркестратором в task contract;
+  - без явного разрешения на инициализацию считай поведение таким же, как для `shared`.
+
 ## Delivery Contract (Mandatory)
 - Отчет Оркестратору отправляется отдельным новым `Prompt_*.md` в его inbox (по `Reply-To` из входящего prompt).
 - Нельзя считать, что Оркестратор сам прочитает твой `*_Result.md`. Это внутренний run-log, а не транспорт межлуперного ответа.
@@ -32,6 +41,13 @@
   - строго соблюдай пошаговый алгоритм `Reply-To` из `ROLE_LOOPER_BASE`:
     extract -> ensure/create inbox -> write local report -> create prompt via `create_prompt_file.py` -> verify file exists (retry once) -> в текущем result только краткий статус доставки.
 - Если `Reply-To` отсутствует, отправь отчет в стандартный Orchestrator inbox с корректным SenderID из входящего prompt и явно зафиксируй используемый маршрут.
+
+## Git Evidence in Deliverable (Mandatory)
+- В отчете обязательно приложи Git-доказательства:
+  - `git status --short` до изменений;
+  - `git status --short` после изменений;
+  - commit hash итогового коммита (или reason, почему commit не создан по `CommitPolicy`);
+  - список файлов из последнего коммита.
 
 ## Completion Rule
 - После завершения работ (или при необходимости уточнения) обязательно сформируй и отправь prompt Оркестратору в том же turn.
