@@ -43,9 +43,13 @@ if /I not "%AGENT_PATH%"=="." set "AGENT_DIR=%PROJECT_ROOT%\%AGENT_PATH%"
 set "TALKER_ROUTING_FLAG="
 if exist "%AGENT_DIR%\ROLE_TALKER.md" set "TALKER_ROUTING_FLAG=--talker-routing"
 set "EXTRA_ARGS="
-shift
-shift
-set "EXTRA_ARGS=%*"
 
+:collect_extra_args
+if "%~3"=="" goto :run_loop
+set "EXTRA_ARGS=%EXTRA_ARGS% %3"
+shift
+goto :collect_extra_args
+
+:run_loop
 py -3 .\codex_prompt_fileloop.py --project-root "%PROJECT_ROOT%" --agent-path "%AGENT_PATH%" --runner kimi %TALKER_ROUTING_FLAG% %EXTRA_ARGS%
 pause
