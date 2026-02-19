@@ -38,8 +38,12 @@
   - соблюдай `Reply-To.SenderID`, если он задан как часть контракта.
   - `Reply-To.FilePattern`: поддерживается только `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`; если поле отсутствует, используй этот дефолт.
   - если `Reply-To.FilePattern` задан и отличается от поддерживаемого, зафиксируй ошибку `unsupported FilePattern` и запроси обновлённый маршрут у Оркестратора.
-  - строго соблюдай пошаговый алгоритм `Reply-To` из `ROLE_LOOPER_BASE`:
-    extract -> ensure/create inbox -> write local report -> create prompt via `create_prompt_file.py` -> verify file exists (retry once) -> в текущем result только краткий статус доставки.
+  - для доставки строго используй deterministic helper из `ROLE_LOOPER_BASE`:
+    `send_reply_to_report.py` (extract/validate Reply-To -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify + retry once).
+  - Команда:
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  - в текущем result оставляй только краткий статус доставки.
 - Если `Reply-To` отсутствует, отправь отчет в стандартный Orchestrator inbox с корректным SenderID из входящего prompt и явно зафиксируй используемый маршрут.
 
 ## Git Evidence in Deliverable (Mandatory)

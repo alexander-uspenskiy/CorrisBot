@@ -49,9 +49,11 @@ If a final file is created "just in case" and no path is provided, place it in `
 - Если `Reply-To.FilePattern` отсутствует, используй стандартный pattern.
 - Если `Reply-To.FilePattern` задан и отличается от стандартного pattern, считай маршрут невалидным и зафиксируй ошибку `unsupported FilePattern`.
 - Нельзя подменять путь на "похожий" или "ожидаемый по умолчанию", если явно указан `Reply-To`.
-- Перед отправкой проверь, что `Reply-To.InboxPath` существует; если нет - создай каталог.
 - Ответ/отчет отправляй только новым `Prompt_*.md` в `Reply-To.InboxPath`; не заменяй это сообщением только в своем `*_Result.md`.
-- Для создания `Prompt_*.md` используй helper-скрипт `create_prompt_file.py`; ручная сборка имени запрещена.
-- После записи файла проверь, что файл реально создан. Если проверка не прошла - повтори попытку один раз, потом зафиксируй ошибку.
+- Для Reply-To доставки используй deterministic helper `send_reply_to_report.py` (через `LOOPER_ROOT`):
+  - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+- `send_reply_to_report.py` обязателен для Reply-To маршрута и выполняет весь транспортный цикл:
+  extract/validate `Reply-To` -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
 - При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
 - Исключение: relay-механизм Talker (`type: relay`) может содержать verbatim payload в Result по правилам `ROLE_TALKER`.

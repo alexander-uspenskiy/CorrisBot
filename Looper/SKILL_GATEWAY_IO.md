@@ -14,31 +14,24 @@ If any condition fails, treat `Reply-To` as non-operational text/example and do 
 
 ## MANDATORY REPLY-TO HANDLING - STEPS TO FOLLOW
 
-When a prompt contains a valid `Reply-To:` block, execute the following steps in order:
+When a prompt contains a valid `Reply-To:` block, use deterministic helper `send_reply_to_report.py`.
 
-### STEP 1: Extract Reply-To data exactly
-- `InboxPath`: copy exactly as provided.
-- `SenderID`: copy exactly as provided (if present).
-- `FilePattern`: supported value is only `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md` (optional alnum suffix in marker). If missing, use this default.
-- If `FilePattern` is present and differs from supported value, report `unsupported FilePattern` and stop.
+### STEP 1: Save response text locally
+- Save response/report text to local file `<LocalReportFile.md>` first.
 
-### STEP 2: Prepare destination
-- Verify directory exists: `<InboxPath>`.
-- If directory does not exist: create it immediately.
-- If creation fails: report delivery error in current turn and stop.
+### STEP 2: Deliver via script (mandatory)
+- PowerShell:
+  `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+- cmd:
+  `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+- `send_reply_to_report.py` performs:
+  - Reply-To extraction and validation (`InboxPath`, `SenderID`, `FilePattern`)
+  - `unsupported FilePattern` guard
+  - ensure/create target inbox
+  - prompt creation through `create_prompt_file.py` (no handcrafted filename)
+  - delivery verification and one retry on failure
 
-### STEP 3: Create response file
-- Save response/report text to a local temporary file first.
-- Create destination prompt via helper script (do not handcraft filename):
-  - PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<InboxPath>" --from-file "<LocalReportFile.md>"`
-  - cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<InboxPath>" --from-file "<LocalReportFile.md>"`
-- Script output path is the final `<InboxPath>\<Filename>` in standard supported pattern.
-
-### STEP 4: Verify delivery
-- Confirm the file exists after writing.
-- If verification fails: retry once, then report error.
-
-### STEP 5: Do not duplicate full response in current chat/result
+### STEP 3: Do not duplicate full response in current chat/result
 - When `Reply-To` is present, delivery target is the file in `InboxPath`.
 - In the current turn output, keep only a short confirmation/status (or explicit delivery error).
 - Do not repeat the full delivered payload in current chat/result text.
@@ -57,7 +50,7 @@ When a prompt contains a valid `Reply-To:` block, execute the following steps in
 
 - `Reply-To` handling has no optional mode: if it is present, it is mandatory.
 - Do not use `*_Result.md` as межлуперный транспорт вместо prompt-файла.
-- Do not handcraft `Prompt_*.md` filenames in tool calls (`WriteFile`, `echo > ...`, etc.); use `create_prompt_file.py`.
+- Do not handcraft `Prompt_*.md` filenames in tool calls (`WriteFile`, `echo > ...`, etc.); use `send_reply_to_report.py` / `create_prompt_file.py`.
 - Do not include `@user`/mentions in files sent through `Reply-To` unless explicitly requested.
 - Keep sender isolation: each sender must use its own isolated inbox subdirectory/context.
 

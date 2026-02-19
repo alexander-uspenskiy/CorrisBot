@@ -44,8 +44,12 @@
   - Не заменяй его на "логически похожие" пути (например, `<PROJECT_ROOT_PATH>\Talker\...`), если Talker явно не прислал обновленный `Reply-To`.
   - Менять маршрут можно только по явному новому `Reply-To` от Talker.
   - Если `Reply-To.FilePattern` задан и отличается от поддерживаемого, зафиксируй ошибку `unsupported FilePattern` и запроси обновлённый маршрут.
-  - Для любой отправки по этому маршруту строго применяй пошаговый алгоритм из `ROLE_LOOPER_BASE`:
-    extract -> ensure/create inbox -> write local report -> create prompt via `create_prompt_file.py` -> verify file exists (retry once on failure) -> в текущем result только краткий статус.
+  - Для любой отправки по этому маршруту используй deterministic helper из `ROLE_LOOPER_BASE`:
+    `send_reply_to_report.py` (extract/validate Reply-To -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify + retry once).
+  - Команда:
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  - В текущем result оставляй только краткий статус доставки.
 
 ## Delegation Transport Contract (Worker <-> Orchestrator)
 - Межлуперный обмен с Worker делай только через `Prompt_*.md` в inbox; не используй `*_Result.md` как канал "ответа исполнителя".
@@ -75,17 +79,18 @@
   - ключевые риски;
   - ключевые вопросы пользователю.
 
-### Phase 0.5: Worker Bootstrap (MANDATORY)
-- Перед началом любой реализации обязан создать минимум одного Worker через SKILL AGENT-RUNNER.
-- Только после создания и запуска Worker можно начинать делегирование задач.
-- Пропуск этого шага = нарушение протокола. Оркестратор без Worker не может начинать содержательную работу.
-
-### Phase 0.7: Git Preflight Gate (MANDATORY)
-- До первого делегирования Worker в рамках проектной сессии для конкретного `RepoRoot` обязан выполнить Git preflight.
+### Phase 0.4: Git Preflight Gate (MANDATORY)
+- До создания/запуска любого Worker в рамках проектной сессии для конкретного `RepoRoot` обязан выполнить Git preflight.
 - Если `ImplementationRoot`/`RepoRoot` не указан во входной задаче, обязан запросить путь у пользователя и остановить делегирование до получения ответа.
 - Git preflight выполняется командой `Looper\EnsureRepo.bat <RepoRoot>` (или эквивалентным абсолютным путем до `EnsureRepo.bat`) с обязательной проверкой `exit code`.
-- Для одного и того же `RepoRoot` в пределах сессии preflight выполняется минимум один раз до первого task-prompt Worker.
-- Если `EnsureRepo.bat` завершился ошибкой, Оркестратор обязан stop and ask user: сообщить проблему пользователю и ждать решения без продолжения делегирования.
+- Для одного и того же `RepoRoot` в пределах сессии preflight выполняется минимум один раз до первого Worker bootstrap и до первого task-prompt Worker.
+- Если `EnsureRepo.bat` завершился ошибкой, Оркестратор обязан stop and ask user: сообщить проблему пользователю и ждать решения без создания Worker и без продолжения делегирования.
+
+### Phase 0.5: Worker Bootstrap (MANDATORY)
+- Перед началом любой реализации обязан создать минимум одного Worker через SKILL AGENT-RUNNER.
+- Worker bootstrap разрешен только после успешного Git preflight из Phase 0.4.
+- Только после создания и запуска Worker можно начинать делегирование задач.
+- Пропуск этого шага = нарушение протокола. Оркестратор без Worker не может начинать содержательную работу.
 
 ### Source-of-Truth Priority
 - Реальные артефакты проекта (код, скрипты, XML/JSON, логи, результаты запусков) важнее текстовых инструкций.
