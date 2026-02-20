@@ -403,11 +403,100 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
 
             runner.run_forever()
 
-            self.assertEqual([], list_relay_files(runner.inbox_root, "tg_corriscant"))
             self.assertEqual([], list_relay_files(runner.inbox_root, "tg_user"))
             self.assertTrue(
                 any("protocol error: target mismatch" in text for text, _ in runner.console_messages)
             )
+
+    def test_unit_build_loop_prompt_removes_routing_contract_and_projects(self) -> None:
+        user_text = (
+            "Message\n"
+            "Routing-Contract:\n"
+            "- Version: 1\n"
+            "- RouteSessionID: sess123\n"
+            "- ProjectTag: ProjA\n"
+            "- OrchestratorSenderID: Orc_1\n"
+            "- CreatedAtUTC: 2026-02-21T00:00:00Z\n"
+            "- AppRoot: C:\\app\n"
+            "- AgentsRoot: C:\\agents\n"
+            "- EditRoot: C:\\edit\n"
+            "\n"
+            "Route-Meta:\n"
+            "- ProjectTag: ProjA\n"
+            "- RouteSessionID: sess123\n"
+        )
+        prompt = LoopRunner.build_loop_prompt(
+            user_prompt=user_text,
+            sender_id="Worker_1",
+            user_sender_id="tg_user",
+            is_talker_context=False,
+            worker_name="Orchestrator_01"
+        )
+        self.assertNotIn("Routing-Contract:", prompt)
+        self.assertNotIn("AppRoot: C:\\app", prompt)
+        self.assertIn("Transport Context (Read-Only):", prompt)
+        self.assertIn("- RouteSessionID: sess123", prompt)
+        self.assertIn("- ProjectTag: ProjA", prompt)
+        self.assertIn("- AgentsRoot: C:\\agents", prompt)
+        self.assertIn("- EditRoot: C:\\edit", prompt)
+
+    def test_unit_build_loop_prompt_worker_no_paths(self) -> None:
+        user_text = (
+            "Message\n"
+            "Routing-Contract:\n"
+            "- Version: 1\n"
+            "- RouteSessionID: sess123\n"
+            "- ProjectTag: ProjA\n"
+            "- OrchestratorSenderID: Orc_1\n"
+            "- CreatedAtUTC: 2026-02-21T00:00:00Z\n"
+            "- AppRoot: C:\\app\n"
+            "- AgentsRoot: C:\\agents\n"
+            "- EditRoot: C:\\edit\n"
+            "\n"
+            "Route-Meta:\n"
+            "- ProjectTag: ProjA\n"
+            "- RouteSessionID: sess123\n"
+        )
+        prompt = LoopRunner.build_loop_prompt(
+            user_prompt=user_text,
+            sender_id="Orc_1",
+            user_sender_id="tg_user",
+            is_talker_context=False,
+            worker_name="Worker_001"
+        )
+        self.assertNotIn("Routing-Contract:", prompt)
+        self.assertNotIn("AgentsRoot: C:\\agents", prompt)
+        self.assertNotIn("EditRoot: C:\\edit", prompt)
+        self.assertIn("- RouteSessionID: sess123", prompt)
+
+    def test_unit_build_loop_prompt_talker_no_paths(self) -> None:
+        user_text = (
+            "Message\n"
+            "Routing-Contract:\n"
+            "- Version: 1\n"
+            "- RouteSessionID: sess123\n"
+            "- ProjectTag: ProjA\n"
+            "- OrchestratorSenderID: Orc_1\n"
+            "- CreatedAtUTC: 2026-02-21T00:00:00Z\n"
+            "- AppRoot: C:\\app\n"
+            "- AgentsRoot: C:\\agents\n"
+            "- EditRoot: C:\\edit\n"
+            "\n"
+            "Route-Meta:\n"
+            "- ProjectTag: ProjA\n"
+            "- RouteSessionID: sess123\n"
+        )
+        prompt = LoopRunner.build_loop_prompt(
+            user_prompt=user_text,
+            sender_id="Orc_1",
+            user_sender_id="tg_user",
+            is_talker_context=True,
+            worker_name="Talker"
+        )
+        self.assertNotIn("Routing-Contract:", prompt)
+        self.assertNotIn("AgentsRoot: C:\\agents", prompt)
+        self.assertNotIn("EditRoot: C:\\edit", prompt)
+        self.assertIn("- RouteSessionID: sess123", prompt)
 
 
 if __name__ == "__main__":

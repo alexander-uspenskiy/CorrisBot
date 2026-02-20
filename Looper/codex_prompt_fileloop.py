@@ -392,7 +392,24 @@ class LoopRunner:
         sender_id: str,
         user_sender_id: str,
         is_talker_context: bool,
+        worker_name: str = "",
     ) -> str:
+        import route_contract_utils
+        
+        is_operational = False
+        has_routing_contract_block = bool(route_contract_utils._scan_markdown_block(user_prompt, "Routing-Contract:"))
+        if has_routing_contract_block and not sender_id.startswith("tg_"):
+            try:
+                route_contract_utils.extract_route_meta_fields(user_prompt)
+                is_operational = True
+            except Exception:
+                pass
+
+        routing_contract: dict[str, str] | None = None
+        if is_operational:
+            routing_contract = route_contract_utils.extract_routing_contract_fields(user_prompt)
+            user_prompt = route_contract_utils.remove_markdown_block(user_prompt, "Routing-Contract:")
+
         # Core looper policy rules are centralized in each agent's AGENTS.md Read chain.
         # Keep only runtime execution
         # constraints in this injected prompt to avoid duplicate sources of truth.
@@ -405,6 +422,19 @@ class LoopRunner:
                 "- If `Fixed User Sender ID` is unknown, report routing protocol error explicitly; never guess.\n"
             )
             routing_context = f"Fixed User Sender ID: {fixed_user_sender}\n\n"
+            
+        safe_projection = ""
+        if is_operational and routing_contract is not None:
+            proj_lines = [
+                f"- RouteSessionID: {routing_contract.get('RouteSessionID', '')}",
+                f"- ProjectTag: {routing_contract.get('ProjectTag', '')}",
+            ]
+            if not is_talker_context:
+                if worker_name and "Orchestrator" in worker_name:
+                    proj_lines.append(f"- AgentsRoot: {routing_contract.get('AgentsRoot', '')}")
+                    proj_lines.append(f"- EditRoot: {routing_contract.get('EditRoot', '')}")
+            safe_projection = "Transport Context (Read-Only):\n" + "\n".join(proj_lines) + "\n\n"
+            
         rules = (
             "Loop execution rules (strict):\n"
             "- Process exactly one incoming prompt from this iteration.\n"
@@ -419,6 +449,7 @@ class LoopRunner:
             "- Do not use internet/network resources (no web access, no API calls, no downloads).\n\n"
             f"Sender ID: {sender_id}\n\n"
             f"{routing_context}"
+            f"{safe_projection}"
             "Incoming prompt:\n"
         )
         return f"{rules}\n{user_prompt}"
@@ -1136,6 +1167,7 @@ class LoopRunner:
                 sender_id,
                 user_sender_id,
                 self.is_talker_context,
+                self.worker_dir.name,
             )
             used_resume = bool(thread_id and thread_id.strip())
 

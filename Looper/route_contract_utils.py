@@ -48,6 +48,58 @@ def _scan_markdown_block(prompt_text: str, header: str) -> dict[str, str]:
     return {}
 
 
+def remove_markdown_block(prompt_text: str, header: str) -> str:
+    """Removes a markdown block by exact header. Returns modified text or original if not found."""
+    lines = prompt_text.splitlines(keepends=True)
+    in_code_fence = False
+    
+    start_idx = -1
+    end_idx = -1
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence:
+            continue
+        if stripped.startswith(">"):
+            continue
+        if stripped != header:
+            continue
+
+        has_items = False
+        target_end_idx = idx + 1
+        for tail_idx in range(idx + 1, len(lines)):
+            s = lines[tail_idx].strip()
+            if not s:
+                target_end_idx = tail_idx + 1
+                if has_items:
+                    break
+                continue
+            if s.startswith("```") or s.startswith(">"):
+                target_end_idx = tail_idx
+                break
+            m = BLOCK_ITEM_RE.match(s)
+            if m is None:
+                target_end_idx = tail_idx
+                if has_items:
+                    break
+                continue
+            has_items = True
+            target_end_idx = tail_idx + 1
+
+        if has_items:
+            start_idx = idx
+            end_idx = target_end_idx
+            break
+
+    if start_idx == -1:
+        return prompt_text
+
+    return "".join(lines[:start_idx] + lines[end_idx:])
+
+
 def extract_reply_to_fields(prompt_text: str) -> dict[str, str]:
     fields = _scan_markdown_block(prompt_text, "Reply-To:")
     inbox = fields.get("InboxPath", "").strip()
