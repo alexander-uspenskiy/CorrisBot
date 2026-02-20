@@ -107,8 +107,8 @@ echo Example 6: %~nx0 "%LOOPER_ROOT%\..\Talker" . --runner kimi
 echo Example 7: %~nx0 "%LOOPER_ROOT%\..\Talker" . --runner codex --model codex-5.3 --reasoning-effort high --dry-run
 echo.
 echo Options:
-echo   --runner codex^|kimi   Choose CLI agent (default: codex)
-echo   --model model_id        Model override passed through resolver bridge
-echo   --reasoning-effort     Per-call override for Codex: low^|medium^|high
+echo   --runner codex^|kimi   Override resolved runner from per-agent profile
+echo   --model model_id        Override resolved model from per-agent profile
+echo   --reasoning-effort     Override resolved Codex reasoning: low^|medium^|high
 echo   --dry-run             Print command without launching WT
 exit /b 1

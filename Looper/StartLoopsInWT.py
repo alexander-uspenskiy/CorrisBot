@@ -536,11 +536,11 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     parser.add_argument(
         "--config-path",
         default=str(SCRIPT_DIR.parent / "loops.wt.json"),
-        help="Path to WT layout config file.",
+        help="Path to WT layout config file (layout/window concerns only).",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print command without launching WT.")
     parser.add_argument("--runner", default=None, choices=["codex", "kimi"],
-                        help="CLI agent backend: codex (default) or kimi.")
+                        help="Optional CLI runner override; otherwise resolved from per-agent profile.")
     parser.add_argument(
         "--model",
         help="CLI model override forwarded via resolver bridge.",
