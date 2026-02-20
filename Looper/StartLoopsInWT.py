@@ -64,15 +64,6 @@ def normalize_for_match(text: str) -> str:
     return text.lower().replace("/", "\\")
 
 
-def contains_path_token(haystack: str, needle: str) -> bool:
-    if not needle:
-        return False
-    # Require non-alphanumeric boundaries to avoid partial name matches
-    # (for example, Worker_Merge vs Worker_Merger).
-    pattern = re.compile(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])")
-    return bool(pattern.search(haystack))
-
-
 def get_powershell_executable() -> str:
     return shutil.which("powershell") or shutil.which("pwsh") or ""
 
@@ -103,7 +94,7 @@ def get_process_command_lines() -> list[str]:
         return []
     command = (
         "$ErrorActionPreference='SilentlyContinue'; "
-        "Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine | ConvertTo-Json -Compress"
+        "Get-CimInstance Win32_Process | Select-Object -Property Name,CommandLine | ConvertTo-Json -Compress"
     )
     try:
         proc = subprocess.run(
@@ -128,29 +119,100 @@ def get_process_command_lines() -> list[str]:
     except Exception:
         return []
 
+    lines = []
+    if isinstance(obj, dict):
+        obj = [obj]
     if isinstance(obj, list):
-        return [str(x) for x in obj if x]
-    if isinstance(obj, str):
-        return [obj]
-    return []
+        for item in obj:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("Name", "")).lower()
+            cmdline = str(item.get("CommandLine", ""))
+            if not cmdline or cmdline.lower() == "none":
+                continue
+            
+            # Skip Terminal processes as they can retain child command line arguments indefinitely
+            if "wt.exe" in name or "windowsterminal" in name:
+                continue
+                
+            lines.append(cmdline.lower())
+    return lines
+
+
+def extract_cmd_arg(cmd: str, arg_name: str) -> str | None:
+    idx = cmd.lower().find(arg_name.lower())
+    if idx == -1: return None
+    if idx > 0 and cmd[idx-1] not in " \t\"'": return None
+    
+    start = idx + len(arg_name)
+    while start < len(cmd) and cmd[start] in " \t=":
+        start += 1
+        
+    if start >= len(cmd): return None
+    
+    in_quote = None
+    allow_escape = False
+    
+    if cmd.startswith('\\"', start):
+        in_quote = '"'
+        start += 2
+        allow_escape = True
+    elif cmd[start] in "\"'":
+        in_quote = cmd[start]
+        start += 1
+        
+    result = []
+    i = start
+    while i < len(cmd):
+        c = cmd[i]
+        if in_quote:
+            if allow_escape and c == '\\' and i+1 < len(cmd) and cmd[i+1] == in_quote:
+                break
+            elif c == in_quote and not allow_escape:
+                break
+            else:
+                result.append(c)
+                i += 1
+        else:
+            if c in " \t>":
+                break
+            result.append(c)
+            i += 1
+            
+    val = "".join(result).strip("\"'")
+    return val if val else None
 
 
 def test_agent_already_running(
     command_lines: list[str], project_root: Path, agent_path: str, agent_abs_path: Path
 ) -> bool:
-    project_norm = normalize_for_match(str(project_root))
-    agent_rel_norm = normalize_for_match(normalize_agent_path(agent_path))
-    agent_abs_norm = normalize_for_match(str(agent_abs_path))
+    project_norm = str(project_root).strip().lower().replace("/", "\\")
+    if project_norm.endswith("\\"):
+        project_norm = project_norm[:-1]
 
-    for cmd in command_lines:
-        lower = normalize_for_match(cmd)
+    agent_rel_norm = str(agent_path).strip().lower().replace("/", "\\")
+    if agent_rel_norm.startswith(".\\"):
+        agent_rel_norm = agent_rel_norm[2:]
+
+    for lower in command_lines:
         if "codex_prompt_fileloop.py" not in lower and "codexloop.bat" not in lower:
             continue
-        has_project = contains_path_token(lower, project_norm)
-        has_agent_rel = contains_path_token(lower, agent_rel_norm)
-        has_agent_abs = contains_path_token(lower, agent_abs_norm)
-        if has_project and (has_agent_rel or has_agent_abs):
-            return True
+            
+        cmd_project = extract_cmd_arg(lower, "--project-root")
+        cmd_agent = extract_cmd_arg(lower, "--agent-path")
+        
+        if cmd_project and cmd_agent:
+            cmd_project = cmd_project.strip().lower().replace("/", "\\")
+            if cmd_project.endswith("\\"):
+                cmd_project = cmd_project[:-1]
+                
+            cmd_agent = cmd_agent.strip().lower().replace("/", "\\")
+            if cmd_agent.startswith(".\\"):
+                cmd_agent = cmd_agent[2:]
+                
+            if cmd_project == project_norm and cmd_agent == agent_rel_norm:
+                return True
+                
     return False
 
 
