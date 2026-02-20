@@ -155,6 +155,7 @@ def _require_mutation_allowed(actor_role: str, agent_kind: str) -> None:
 
 def _acquire_lock(path: Path, timeout_seconds: float) -> tuple[int, Path, str]:
     lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.time() + max(0.05, timeout_seconds)
 
     while True:
@@ -197,7 +198,99 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + f".tmp.{os.getpid()}.{uuid.uuid4().hex}")
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp_path.replace(path)
+    _replace_with_retry(tmp_path, path)
+
+
+def _replace_with_retry(tmp_path: Path, target_path: Path, attempts: int = 40, delay_seconds: float = 0.01) -> None:
+    last_error: Exception | None = None
+    for idx in range(attempts):
+        try:
+            tmp_path.replace(target_path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            if idx >= attempts - 1:
+                break
+            time.sleep(delay_seconds)
+        except OSError as exc:
+            raise ProfileOpsError("write_failed", f"atomic replace failed for {target_path}: {exc}") from exc
+    raise ProfileOpsError(
+        "write_conflict",
+        f"atomic replace conflicted for {target_path}: {last_error}",
+    )
+
+
+def _snapshot_root(agent_dir: Path) -> Path:
+    return agent_dir / "AgentRunner" / "last_known_good"
+
+
+def _snapshot_path(agent_dir: Path, filename: str) -> Path:
+    return _snapshot_root(agent_dir) / filename
+
+
+def _update_last_known_good_snapshot(agent_dir: Path, lock_timeout: float) -> None:
+    for filename in ("agent_runner.json", "codex_profile.json", "kimi_profile.json"):
+        source_path = agent_dir / filename
+        if not source_path.is_file():
+            continue
+        dest_path = _snapshot_path(agent_dir, filename)
+        fd, lock_path, token = _acquire_lock(dest_path, lock_timeout)
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = dest_path.with_suffix(dest_path.suffix + f".tmp.{os.getpid()}.{uuid.uuid4().hex}")
+            tmp_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+            _replace_with_retry(tmp_path, dest_path)
+        finally:
+            _release_lock(fd, lock_path, token)
+
+
+def _restore_from_snapshot_if_available(agent_dir: Path, lock_timeout: float) -> tuple[bool, list[str]]:
+    restored: list[str] = []
+    for filename in ("agent_runner.json", "codex_profile.json", "kimi_profile.json"):
+        source_path = _snapshot_path(agent_dir, filename)
+        if not source_path.is_file():
+            return False, []
+        dest_path = agent_dir / filename
+        fd, lock_path, token = _acquire_lock(dest_path, lock_timeout)
+        try:
+            tmp_path = dest_path.with_suffix(dest_path.suffix + f".tmp.{os.getpid()}.{uuid.uuid4().hex}")
+            tmp_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+            _replace_with_retry(tmp_path, dest_path)
+            restored.append(str(dest_path))
+        finally:
+            _release_lock(fd, lock_path, token)
+    return True, restored
+
+
+def _restore_template_default(agent_dir: Path, runtime_root: Path, lock_timeout: float) -> list[str]:
+    kind = _classify_agent_kind(agent_dir, runtime_root)
+    repo_root = Path(__file__).resolve().parent.parent
+
+    if kind == "talker":
+        template_root = repo_root / "Talker"
+    elif kind == "orchestrator":
+        template_root = repo_root / "ProjectFolder_Template" / "Orchestrator"
+    elif kind == "worker":
+        template_root = repo_root / "ProjectFolder_Template" / "Workers" / "Worker_001"
+    else:
+        raise ProfileOpsError("template_default_not_available", f"template default is not available for kind={kind}")
+
+    restored: list[str] = []
+    for filename in ("agent_runner.json", "codex_profile.json", "kimi_profile.json"):
+        source_path = template_root / filename
+        if not source_path.is_file():
+            raise ProfileOpsError("template_default_not_available", f"missing template source: {source_path}")
+        dest_path = agent_dir / filename
+        fd, lock_path, token = _acquire_lock(dest_path, lock_timeout)
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = dest_path.with_suffix(dest_path.suffix + f".tmp.{os.getpid()}.{uuid.uuid4().hex}")
+            tmp_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+            _replace_with_retry(tmp_path, dest_path)
+            restored.append(str(dest_path))
+        finally:
+            _release_lock(fd, lock_path, token)
+    return restored
 
 
 def _append_audit_record(runtime_root: Path, record: dict[str, Any], lock_timeout: float) -> None:
@@ -344,6 +437,7 @@ def mutate_set_runner(
             _release_lock(fd, lock_path, token)
 
         _load_profile_set(normalized_agent_dir, runtime_root)
+        _update_last_known_good_snapshot(normalized_agent_dir, lock_timeout)
         _append_audit_record(
             runtime_root,
             _audit_record(
@@ -472,6 +566,7 @@ def mutate_set_backend(
             _release_lock(fd, lock_path, token)
 
         _load_profile_set(normalized_agent_dir, runtime_root)
+        _update_last_known_good_snapshot(normalized_agent_dir, lock_timeout)
         _append_audit_record(
             runtime_root,
             _audit_record(
@@ -510,6 +605,82 @@ def mutate_set_backend(
         "backend": backend,
         "target_file": str(target_path),
     }
+
+
+def self_heal_profiles(
+    *,
+    agent_dir: str | Path,
+    actor_role: str,
+    actor_id: str,
+    request_ref: str,
+    intent: str,
+    lock_timeout: float,
+) -> dict[str, Any]:
+    if intent != "explicit":
+        raise ProfileOpsError("explicit_intent_required", "self-heal requires --intent explicit")
+
+    normalized_agent_dir = normalize_agent_dir(agent_dir)
+    runtime_root = discover_runtime_root(normalized_agent_dir)
+    _require_mutation_allowed(actor_role, _classify_agent_kind(normalized_agent_dir, runtime_root))
+
+    action = "self_heal_restore"
+    target_path = normalized_agent_dir / "agent_runner.json"
+    changes: dict[str, Any] = {}
+
+    try:
+        restore_source = ""
+        restored_files: list[str] = []
+        restored, restored_files = _restore_from_snapshot_if_available(normalized_agent_dir, lock_timeout)
+        if restored:
+            restore_source = "last_known_good"
+        else:
+            restored_files = _restore_template_default(normalized_agent_dir, runtime_root, lock_timeout)
+            restore_source = "template_default"
+
+        _load_profile_set(normalized_agent_dir, runtime_root)
+        _update_last_known_good_snapshot(normalized_agent_dir, lock_timeout)
+
+        changes = {
+            "restore_source": restore_source,
+            "restored_files": restored_files,
+        }
+        _append_audit_record(
+            runtime_root,
+            _audit_record(
+                actor_role=actor_role,
+                actor_id=actor_id,
+                action=action,
+                target_file=target_path,
+                changes=changes,
+                request_ref=request_ref,
+                result="ok",
+            ),
+            lock_timeout,
+        )
+        return {
+            "status": "ok",
+            "action": action,
+            "agent_dir": str(normalized_agent_dir),
+            "restore_source": restore_source,
+            "restored_files": restored_files,
+        }
+    except ProfileOpsError as exc:
+        _append_audit_record(
+            runtime_root,
+            _audit_record(
+                actor_role=actor_role,
+                actor_id=actor_id,
+                action=action,
+                target_file=target_path,
+                changes=changes,
+                request_ref=request_ref,
+                result="error",
+                error_code=exc.code,
+                error_message=exc.message,
+            ),
+            lock_timeout,
+        )
+        raise
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -554,6 +725,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="New reasoning_effort for codex backend.",
     )
 
+    subparsers.add_parser("self-heal", parents=[common_mutation])
+
     return parser
 
 
@@ -583,6 +756,15 @@ def main() -> int:
                 backend=args.backend,
                 model=args.model,
                 reasoning_effort=args.reasoning_effort,
+                lock_timeout=args.lock_timeout,
+            )
+        elif args.command == "self-heal":
+            payload = self_heal_profiles(
+                agent_dir=args.agent_dir,
+                actor_role=args.actor_role,
+                actor_id=args.actor_id,
+                request_ref=args.request_ref,
+                intent=args.intent,
                 lock_timeout=args.lock_timeout,
             )
         else:

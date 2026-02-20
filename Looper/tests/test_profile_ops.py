@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -206,6 +207,158 @@ class ProfileOpsTests(unittest.TestCase):
             self.assertEqual(1, len(audit_lines))
             self.assertEqual("error", audit_lines[0]["result"])
             self.assertEqual("ownership_violation", audit_lines[0]["error_code"])
+
+    def test_self_heal_restore_from_last_known_good_writes_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root, _, worker_dir = self._prepare_project_tree(Path(temp_dir))
+
+            code, _, stderr = self._run_script(
+                [
+                    "set-backend",
+                    "--agent-dir",
+                    str(worker_dir),
+                    "--actor-role",
+                    "orchestrator",
+                    "--actor-id",
+                    "Orc_ProjectA",
+                    "--request-ref",
+                    "REQ-005A",
+                    "--intent",
+                    "explicit",
+                    "--backend",
+                    "codex",
+                    "--model",
+                    "codex-5.3-mini",
+                ]
+            )
+            self.assertEqual(0, code, msg=stderr)
+
+            (worker_dir / "codex_profile.json").write_text("{broken", encoding="utf-8")
+            code, stdout, stderr = self._run_script(
+                [
+                    "self-heal",
+                    "--agent-dir",
+                    str(worker_dir),
+                    "--actor-role",
+                    "orchestrator",
+                    "--actor-id",
+                    "Orc_ProjectA",
+                    "--request-ref",
+                    "REQ-005B",
+                    "--intent",
+                    "explicit",
+                ]
+            )
+            self.assertEqual(0, code, msg=stderr)
+            payload = json.loads(stdout.strip())
+            self.assertEqual("self_heal_restore", payload["action"])
+            self.assertEqual("last_known_good", payload["restore_source"])
+
+            restored = json.loads((worker_dir / "codex_profile.json").read_text(encoding="utf-8"))
+            self.assertEqual("codex-5.3-mini", restored["model"])
+
+            audit_lines = self._read_audit_lines(project_root)
+            self.assertGreaterEqual(len(audit_lines), 2)
+            self.assertEqual("self_heal_restore", audit_lines[-1]["action"])
+            self.assertEqual("ok", audit_lines[-1]["result"])
+            self.assertEqual("last_known_good", audit_lines[-1]["changes"]["restore_source"])
+
+    def test_snapshot_isolation_between_workers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir) / "ProjectA"
+            _write_json(project_root / "AgentRunner" / "model_registry.json", _default_registry())
+            worker1 = project_root / "Workers" / "Worker_001"
+            worker2 = project_root / "Workers" / "Worker_002"
+            _write_agent_profiles(worker1)
+            _write_agent_profiles(worker2)
+
+            code, _, stderr = self._run_script(
+                [
+                    "set-backend",
+                    "--agent-dir",
+                    str(worker1),
+                    "--actor-role",
+                    "orchestrator",
+                    "--actor-id",
+                    "Orc_ProjectA",
+                    "--request-ref",
+                    "REQ-006",
+                    "--intent",
+                    "explicit",
+                    "--backend",
+                    "codex",
+                    "--model",
+                    "codex-5.3-mini",
+                ]
+            )
+            self.assertEqual(0, code, msg=stderr)
+
+            snapshot1 = worker1 / "AgentRunner" / "last_known_good" / "codex_profile.json"
+            snapshot2 = worker2 / "AgentRunner" / "last_known_good" / "codex_profile.json"
+            self.assertTrue(snapshot1.exists())
+            self.assertFalse(snapshot2.exists())
+
+            payload1 = json.loads(snapshot1.read_text(encoding="utf-8"))
+            self.assertEqual("codex-5.3-mini", payload1["model"])
+
+    def test_read_write_race_has_no_partial_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, _, worker_dir = self._prepare_project_tree(Path(temp_dir))
+            codex_path = worker_dir / "codex_profile.json"
+
+            errors: list[str] = []
+            done = {"value": False}
+
+            def writer() -> None:
+                models = ["codex-5.3", "codex-5.3-mini"]
+                for idx in range(12):
+                    code, _, stderr = self._run_script(
+                        [
+                            "set-backend",
+                            "--agent-dir",
+                            str(worker_dir),
+                            "--actor-role",
+                            "orchestrator",
+                            "--actor-id",
+                            "Orc_ProjectA",
+                            "--request-ref",
+                            f"REQ-RACE-{idx}",
+                            "--intent",
+                            "explicit",
+                            "--backend",
+                            "codex",
+                            "--model",
+                            models[idx % 2],
+                        ]
+                    )
+                    if code != 0:
+                        errors.append(f"writer_failed:{stderr.strip()}")
+                        break
+                done["value"] = True
+
+            thread = threading.Thread(target=writer, daemon=True)
+            thread.start()
+
+            while not done["value"]:
+                try:
+                    text = codex_path.read_text(encoding="utf-8")
+                except PermissionError:
+                    # Windows rename/open race is expected under contention.
+                    continue
+                try:
+                    payload = json.loads(text)
+                    if not isinstance(payload, dict):
+                        errors.append("non_object_payload")
+                        break
+                    if "model" not in payload:
+                        errors.append("model_missing")
+                        break
+                except Exception as exc:
+                    errors.append(f"invalid_json:{exc}")
+                    break
+
+            thread.join(timeout=10)
+            self.assertEqual([], errors)
 
 
 if __name__ == "__main__":

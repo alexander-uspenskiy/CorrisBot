@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -165,6 +166,135 @@ class AgentConfigResolverTests(unittest.TestCase):
         code, _, stderr = self._run_bridge([])
         self.assertEqual(2, code)
         self.assertEqual("argument_error", stderr.strip())
+
+    def test_missing_agent_runner_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            (agent_dir / "agent_runner.json").unlink()
+            with self.assertRaises(ResolverError) as ctx:
+                resolve_agent_config(agent_dir=agent_dir)
+            self.assertEqual("agent_runner_missing", ctx.exception.code)
+
+    def test_invalid_active_profile_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            (agent_dir / "codex_profile.json").write_text("{broken", encoding="utf-8")
+            with self.assertRaises(ResolverError) as ctx:
+                resolve_agent_config(agent_dir=agent_dir)
+            self.assertEqual("active_profile_invalid_json", ctx.exception.code)
+
+    def test_unknown_fields_are_collected_as_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            _write_json(
+                agent_dir / "agent_runner.json",
+                {"version": 1, "runner": "codex", "extra_field": "x"},
+            )
+            _write_json(
+                agent_dir / "codex_profile.json",
+                {"version": 1, "model": "codex-5.3", "reasoning_effort": "high", "extra_profile": 1},
+            )
+            payload = resolve_agent_config(agent_dir=agent_dir)
+            self.assertTrue(any("unknown_field_ignored" in item for item in payload["warnings"]))
+
+    def test_reasoning_invalid_for_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            _write_json(
+                agent_dir / "codex_profile.json",
+                {"version": 1, "model": "codex-5.3", "reasoning_effort": "extreme"},
+            )
+            with self.assertRaises(ResolverError) as ctx:
+                resolve_agent_config(agent_dir=agent_dir)
+            self.assertEqual("reasoning_invalid", ctx.exception.code)
+
+    def test_registry_invalid_default_model(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_root, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            _write_json(
+                runtime_root / "AgentRunner" / "model_registry.json",
+                {
+                    "version": 1,
+                    "codex": {
+                        "models": ["codex-5.3"],
+                        "default_model": "codex-5.3-missing",
+                        "reasoning_effort": ["low", "medium", "high"],
+                    },
+                    "kimi": {
+                        "default_model": "kimi-k2",
+                        "models": ["kimi-k2"],
+                    },
+                },
+            )
+            with self.assertRaises(ResolverError) as ctx:
+                resolve_agent_config(agent_dir=agent_dir)
+            self.assertEqual("registry_backend_invalid", ctx.exception.code)
+
+    def test_cli_reasoning_precedence_over_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            payload = resolve_agent_config(
+                agent_dir=agent_dir,
+                cli_reasoning_effort="low",
+            )
+            self.assertEqual("low", payload["effective"]["reasoning"])
+            self.assertEqual("cli", payload["source"]["reasoning"])
+
+    def test_capability_branch_override_not_supported_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            with mock.patch(
+                "agent_config_resolver.BACKEND_CAPABILITIES",
+                {
+                    "codex": {"supports_runtime_model_override": False},
+                    "kimi": {"supports_runtime_model_override": True},
+                },
+            ):
+                with self.assertRaises(ResolverError) as ctx:
+                    resolve_agent_config(agent_dir=agent_dir, cli_model="codex-5.3-mini")
+                self.assertEqual("model_override_not_supported", ctx.exception.code)
+
+    def test_capability_branch_override_not_supported_default_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, agent_dir = _prepare_agent_tree(Path(temp_dir))
+            with mock.patch(
+                "agent_config_resolver.BACKEND_CAPABILITIES",
+                {
+                    "codex": {"supports_runtime_model_override": False},
+                    "kimi": {"supports_runtime_model_override": True},
+                },
+            ):
+                payload = resolve_agent_config(agent_dir=agent_dir, cli_model="codex-5.3")
+                self.assertEqual("codex-5.3", payload["effective"]["model"])
+                self.assertFalse(payload["capability"]["supports_runtime_model_override"])
+
+    def test_runtime_root_discovery_talker_orchestrator_worker_depths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            talker_root = root / "Talker"
+            _write_json(talker_root / "AgentRunner" / "model_registry.json", _default_registry())
+            _write_json(talker_root / "agent_runner.json", {"version": 1, "runner": "codex"})
+            _write_json(talker_root / "codex_profile.json", {"version": 1, "model": "codex-5.3"})
+            _write_json(talker_root / "kimi_profile.json", {"version": 1, "model": "kimi-k2"})
+
+            project_root = root / "ProjectX"
+            _write_json(project_root / "AgentRunner" / "model_registry.json", _default_registry())
+            orchestrator_dir = project_root / "Orchestrator"
+            worker_dir = project_root / "Workers" / "Worker_001"
+            _write_json(orchestrator_dir / "agent_runner.json", {"version": 1, "runner": "codex"})
+            _write_json(orchestrator_dir / "codex_profile.json", {"version": 1, "model": "codex-5.3"})
+            _write_json(orchestrator_dir / "kimi_profile.json", {"version": 1, "model": "kimi-k2"})
+            _write_json(worker_dir / "agent_runner.json", {"version": 1, "runner": "codex"})
+            _write_json(worker_dir / "codex_profile.json", {"version": 1, "model": "codex-5.3"})
+            _write_json(worker_dir / "kimi_profile.json", {"version": 1, "model": "kimi-k2"})
+
+            talker_payload = resolve_agent_config(agent_dir=talker_root)
+            orchestrator_payload = resolve_agent_config(agent_dir=orchestrator_dir)
+            worker_payload = resolve_agent_config(agent_dir=worker_dir)
+
+            self.assertEqual(str(talker_root.resolve()), talker_payload["runtime_root"])
+            self.assertEqual(str(project_root.resolve()), orchestrator_payload["runtime_root"])
+            self.assertEqual(str(project_root.resolve()), worker_payload["runtime_root"])
 
 
 if __name__ == "__main__":
