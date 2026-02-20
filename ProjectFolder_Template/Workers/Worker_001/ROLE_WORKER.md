@@ -41,6 +41,13 @@
   - при `ExternalPathPolicy=user-approved` используй только пути из `UserApprovedExternalPaths`, и только если `UserApprovalRef` не `none`.
 - Не "занимай" существующий чужой рабочий каталог как default.
 
+## Mandatory Context Reporting (Delivery Control)
+- Для контроля Оркестратором "Worker Rotation Policy", КАЖДЫЙ отчет класса `report` обязан содержать блок с оценкой контекста:
+  - `current_load`: текущая оценка загрузки твоего контекста (в %).
+  - `expected_delta_next`: ожидаемый прирост загрузки для следующей фазы (если известна) или стандартная оценка следующего шага.
+  - `decision`: явная рекомендация Оркестратору — `reuse` (готов взять еще задачу) или `rotate` (пора передать работу новому Worker-у).
+- Без этих полей Оркестратор сочтет твой отчет неполным и не примет его.
+
 ## Delivery Contract (Mandatory)
 - Отчет Оркестратору отправляется отдельным новым `Prompt_*.md` в его inbox (по `Reply-To` из входящего prompt).
 - Worker может отправлять `report` или `trace` Оркестратору, используя тот же `Message-Meta Contract`. Оркестратор решает, какие отчеты Worker-а пересылать дальше.
