@@ -403,6 +403,7 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
 
             runner.run_forever()
 
+            self.assertEqual([], list_relay_files(runner.inbox_root, "tg_corriscant"))
             self.assertEqual([], list_relay_files(runner.inbox_root, "tg_user"))
             self.assertTrue(
                 any("protocol error: target mismatch" in text for text, _ in runner.console_messages)
@@ -430,7 +431,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             sender_id="Worker_1",
             user_sender_id="tg_user",
             is_talker_context=False,
-            worker_name="Orchestrator_01"
         )
         self.assertNotIn("Routing-Contract:", prompt)
         self.assertNotIn("AppRoot: C:\\app", prompt)
@@ -462,7 +462,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             sender_id="Orc_1",
             user_sender_id="tg_user",
             is_talker_context=False,
-            worker_name="Worker_001"
         )
         self.assertNotIn("Routing-Contract:", prompt)
         self.assertNotIn("AgentsRoot: C:\\agents", prompt)
@@ -491,7 +490,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             sender_id="Orc_1",
             user_sender_id="tg_user",
             is_talker_context=True,
-            worker_name="Talker"
         )
         self.assertNotIn("Routing-Contract:", prompt)
         self.assertNotIn("AgentsRoot: C:\\agents", prompt)

@@ -392,7 +392,6 @@ class LoopRunner:
         sender_id: str,
         user_sender_id: str,
         is_talker_context: bool,
-        worker_name: str = "",
     ) -> str:
         import route_contract_utils
         
@@ -430,7 +429,10 @@ class LoopRunner:
                 f"- ProjectTag: {routing_contract.get('ProjectTag', '')}",
             ]
             if not is_talker_context:
-                if worker_name and "Orchestrator" in worker_name:
+                # Deterministic role inference without path-name heuristics:
+                # prompts sent by Orchestrator to workers use SenderID == OrchestratorSenderID.
+                # In all other non-Talker operational contexts, path roots are needed by orchestrator logic.
+                if sender_id != routing_contract.get("OrchestratorSenderID", ""):
                     proj_lines.append(f"- AgentsRoot: {routing_contract.get('AgentsRoot', '')}")
                     proj_lines.append(f"- EditRoot: {routing_contract.get('EditRoot', '')}")
             safe_projection = "Transport Context (Read-Only):\n" + "\n".join(proj_lines) + "\n\n"
@@ -1167,7 +1169,6 @@ class LoopRunner:
                 sender_id,
                 user_sender_id,
                 self.is_talker_context,
-                self.worker_dir.name,
             )
             used_resume = bool(thread_id and thread_id.strip())
 
