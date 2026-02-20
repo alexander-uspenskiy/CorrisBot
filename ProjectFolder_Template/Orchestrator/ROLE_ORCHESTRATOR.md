@@ -36,6 +36,9 @@
   - для одного проекта `ProjectTag` и `SenderID` не менять между сообщениями
   - не используй общий SenderID `Orchestrator`, если проект не единственный.
 - Если в первом сообщении от Talker по проекту передан блок `Reply-To`, считай его обязательным контрактом маршрутизации ответов в этой проектной сессии.
+  - В этом же сообщении ожидай `Route-Meta` и `Routing-Contract` (v1) как fail-closed identity-контракт сессии.
+  - `Route-Meta.RouteSessionID` и `Routing-Contract.RouteSessionID` обязаны совпадать.
+  - Сохрани `Routing-Contract` в `Orchestrator\Temp\routing_contract.json` и используй как pinned source of truth до явного обновления от Talker.
   - Принимай `Reply-To` как источник истины для:
     - `InboxPath` (куда класть prompt-файлы отчетов/вопросов для Talker)
     - `SenderID`
@@ -47,17 +50,22 @@
   - Для любой отправки по этому маршруту используй deterministic helper из `ROLE_LOOPER_BASE`:
     `send_reply_to_report.py` (extract/validate Reply-To -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify + retry once).
   - Команда:
-    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
-    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --report-file "<LocalReportFile.md>"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --report-file "<LocalReportFile.md>"`
   - В текущем result оставляй только краткий статус доставки.
 
 ## Delegation Transport Contract (Worker <-> Orchestrator)
 - Межлуперный обмен с Worker делай только через `Prompt_*.md` в inbox; не используй `*_Result.md` как канал "ответа исполнителя".
+- Для отправки task Worker используй только deterministic helper `send_worker_task.py`; прямой ad-hoc `create_prompt_file.py --inbox ...` для этого канала запрещен.
+- Команда:
+  - PowerShell: `py "$env:LOOPER_ROOT\send_worker_task.py" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --worker-id "<WorkerId>" --task-file "<LocalTaskFile.md>"`
+  - cmd: `py "%LOOPER_ROOT%\send_worker_task.py" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --worker-id "<WorkerId>" --task-file "<LocalTaskFile.md>"`
 - Каждый prompt Worker-у должен содержать `Reply-To` блок с маршрутом ответа в Orchestrator inbox:
   - `Reply-To:`
   - `- InboxPath: <...Orchestrator\\Prompts\\Inbox\\<WorkerSenderFolder>>`
   - `- SenderID: <SenderID оркестратора для этого Worker>`
   - `- FilePattern: Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`
+- Каждый task-prompt Worker-у должен содержать `Route-Meta` и `Routing-Contract` того же `RouteSessionID`.
 - По завершению делегирования (или при вопросе) ожидаемый ответ Worker-а должен приходить новым prompt-файлом в указанный `Reply-To`.
 - Нельзя строить протокол на поллинге `Worker/.../_Result.md` и "дожидании стабилизации файла".
 

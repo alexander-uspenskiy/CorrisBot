@@ -1,9 +1,4 @@
-"""Deliver a report to upstream looper using Reply-To block from incoming prompt.
-
-This helper replaces ad-hoc shell snippets for Reply-To routing:
-extract -> ensure/create inbox -> create prompt via create_prompt_file.py ->
-verify file exists -> retry once on failure.
-"""
+"""Deliver a report via Reply-To with fail-closed route identity checks."""
 
 from __future__ import annotations
 
@@ -15,11 +10,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+from route_contract_utils import (
+    SUPPORTED_FILE_PATTERN,
+    ensure_abs_path,
+    ensure_reply_to_in_scope,
+    ensure_route_meta_matches_contract,
+    ensure_safe_token,
+    extract_reply_to_fields,
+    extract_route_meta_fields,
+    try_extract_routing_contract_fields,
+)
 
-SUPPORTED_FILE_PATTERN = "Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md"
+
 PROMPT_FILENAME_RE = re.compile(r"^Prompt_\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}_\d{3}(?:_[A-Za-z0-9]+)?\.md$")
-PLACEHOLDER_RE = re.compile(r"^<[^>]+>$")
-REPLY_ITEM_RE = re.compile(r"^-\s*([A-Za-z0-9_-]+)\s*:\s*(.*)$")
 
 
 def _read_text_file(path: Path) -> str:
@@ -38,45 +41,26 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
 
 
-def _extract_reply_to_fields(prompt_text: str) -> dict[str, str]:
-    lines = prompt_text.splitlines()
-    in_code_fence = False
-
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_code_fence = not in_code_fence
-            continue
-        if in_code_fence:
-            continue
-        if stripped.startswith(">"):
-            continue
-        if stripped != "Reply-To:":
-            continue
-
-        fields: dict[str, str] = {}
-        for tail in lines[idx + 1 :]:
-            s = tail.strip()
-            if not s:
-                if fields:
-                    break
-                continue
-            if s.startswith("```") or s.startswith(">"):
-                break
-            m = REPLY_ITEM_RE.match(s)
-            if not m:
-                if fields:
-                    break
-                continue
-            fields[m.group(1)] = m.group(2).strip()
-
-        inbox = fields.get("InboxPath", "").strip()
-        if inbox:
-            if PLACEHOLDER_RE.fullmatch(inbox):
-                raise RuntimeError(f"Reply-To.InboxPath is placeholder and cannot be used: {inbox}")
-            return fields
-
-    raise RuntimeError("valid Reply-To block not found in incoming prompt")
+def _load_routing_contract_file(path: Path) -> dict[str, str]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    required = [
+        "Version",
+        "RouteSessionID",
+        "AppRoot",
+        "AgentsRoot",
+        "EditRoot",
+        "ProjectTag",
+        "OrchestratorSenderID",
+        "CreatedAtUTC",
+    ]
+    missing = [key for key in required if not str(payload.get(key, "")).strip()]
+    if missing:
+        raise RuntimeError(f"routing contract file missing required fields: {', '.join(missing)}")
+    contract = {key: str(payload[key]).strip() for key in required}
+    if contract["Version"] != "1":
+        raise RuntimeError(f"unsupported Routing-Contract.Version in file: {contract['Version']!r}")
+    ensure_safe_token("Routing-Contract.RouteSessionID", contract["RouteSessionID"])
+    return contract
 
 
 def _materialize_report_file(args: argparse.Namespace) -> Path:
@@ -141,11 +125,16 @@ def _run_create_prompt(looper_root: Path, inbox: Path, report_file: Path, suffix
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Deliver report via Reply-To block from incoming prompt: "
-            "extract route, ensure inbox, create Prompt_*.md, verify delivery."
+            "Deliver report via Reply-To block from incoming prompt with fail-closed "
+            "Route-Meta/Routing-Contract validation."
         )
     )
     parser.add_argument("--incoming-prompt", required=True, help="Path to incoming prompt file containing Reply-To block.")
+    parser.add_argument(
+        "--routing-contract-file",
+        help="Optional pinned routing_contract.json path (required if incoming prompt does not carry Routing-Contract).",
+    )
+    parser.add_argument("--expected-route-session-id", help="Optional explicit expected RouteSessionID.")
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--report-file", help="Path to local report file.")
     input_group.add_argument("--text", help="Inline report text.")
@@ -168,13 +157,54 @@ def main() -> int:
         if not incoming_prompt.exists():
             raise FileNotFoundError(f"incoming prompt file not found: {incoming_prompt}")
         prompt_text = _read_text_file(incoming_prompt)
-        fields = _extract_reply_to_fields(prompt_text)
 
+        route_meta = extract_route_meta_fields(prompt_text)
+
+        contract_from_prompt = try_extract_routing_contract_fields(prompt_text)
+        contract_from_file: dict[str, str] | None = None
+        if args.routing_contract_file:
+            contract_path = Path(args.routing_contract_file).expanduser().resolve()
+            if not contract_path.exists():
+                raise FileNotFoundError(f"routing contract file not found: {contract_path}")
+            contract_from_file = _load_routing_contract_file(contract_path)
+
+        contract = contract_from_prompt or contract_from_file
+        if contract is None:
+            raise RuntimeError("routing_contract_missing: no Routing-Contract in prompt and no --routing-contract-file")
+
+        if contract_from_prompt and contract_from_file:
+            for key in [
+                "RouteSessionID",
+                "AppRoot",
+                "AgentsRoot",
+                "EditRoot",
+                "ProjectTag",
+                "OrchestratorSenderID",
+            ]:
+                if contract_from_prompt[key] != contract_from_file[key]:
+                    raise RuntimeError(
+                        "routing_contract_mismatch: prompt contract and file contract differ on "
+                        f"{key}: {contract_from_prompt[key]!r} vs {contract_from_file[key]!r}"
+                    )
+
+        ensure_route_meta_matches_contract(route_meta, contract)
+
+        if args.expected_route_session_id:
+            expected_session = args.expected_route_session_id.strip()
+            if not expected_session:
+                raise RuntimeError("expected-route-session-id is empty")
+            if expected_session != contract["RouteSessionID"]:
+                raise RuntimeError(
+                    "routing_session_mismatch: expected-route-session-id does not match contract RouteSessionID"
+                )
+
+        fields = extract_reply_to_fields(prompt_text)
         file_pattern = fields.get("FilePattern", "").strip()
         if file_pattern and file_pattern != SUPPORTED_FILE_PATTERN:
             raise RuntimeError(f"unsupported FilePattern: {file_pattern}")
 
-        inbox = Path(fields["InboxPath"]).expanduser().resolve()
+        inbox = ensure_abs_path("Reply-To.InboxPath", fields["InboxPath"])
+        ensure_reply_to_in_scope(inbox, contract)
         inbox.mkdir(parents=True, exist_ok=True)
         report_file = _materialize_report_file(args)
 
@@ -205,6 +235,8 @@ def main() -> int:
 
         result = {
             "status": "ok",
+            "route_session_id": contract["RouteSessionID"],
+            "project_tag": contract["ProjectTag"],
             "inbox_path": str(inbox),
             "sender_id": fields.get("SenderID", "").strip(),
             "file_pattern": file_pattern or SUPPORTED_FILE_PATTERN,

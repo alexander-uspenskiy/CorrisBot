@@ -60,6 +60,11 @@ If a final file is created "just in case" and no path is provided, place it in `
   - `InboxPath` не плейсхолдер вида `<...>`.
 - Если есть неоднозначность, считать `Reply-To` невалидным и явно зафиксировать проблему маршрутизации вместо молчаливого reroute.
 - Используй значения `Reply-To` как источник истины: `InboxPath` (куда писать), `SenderID` (если задан), `FilePattern`.
+- Для fail-closed identity-контракта текущей сессии дополнительно требуй top-level блок `Route-Meta`:
+  - `- RouteSessionID: <...>`
+  - `- ProjectTag: <...>`
+- Если `Route-Meta` отсутствует/невалиден, блокируй transport и эскалируй upstream.
+- Если во входящем prompt есть `Routing-Contract`, `Route-Meta.RouteSessionID` и `Route-Meta.ProjectTag` обязаны совпадать с ним.
 - Для межлуперного транспорта поддерживается только стандартный pattern:
   `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md` (допустим суффикс `_suffix`, где `suffix` = `[A-Za-z0-9]+`).
 - Если `Reply-To.FilePattern` отсутствует, используй стандартный pattern.
@@ -69,7 +74,10 @@ If a final file is created "just in case" and no path is provided, place it in `
 - Для Reply-To доставки используй deterministic helper `send_reply_to_report.py` (через `LOOPER_ROOT`):
   - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
   - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  - если у агента есть pinned `routing_contract.json`, передавай его явно:
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
 - `send_reply_to_report.py` обязателен для Reply-To маршрута и выполняет весь транспортный цикл:
-  extract/validate `Reply-To` -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
+  extract/validate `Reply-To` + `Route-Meta` (+ `Routing-Contract` if present) -> preflight scope check -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
 - При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
 - Исключение: relay-механизм Talker (`type: relay`) может содержать verbatim payload в Result по правилам `ROLE_TALKER`.

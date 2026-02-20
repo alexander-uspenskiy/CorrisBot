@@ -45,6 +45,7 @@
 - Отчет Оркестратору отправляется отдельным новым `Prompt_*.md` в его inbox (по `Reply-To` из входящего prompt).
 - Нельзя считать, что Оркестратор сам прочитает твой `*_Result.md`. Это внутренний run-log, а не транспорт межлуперного ответа.
 - Если в задаче есть `Reply-To`:
+  - `Route-Meta` в incoming prompt обязателен (`RouteSessionID`, `ProjectTag`); при отсутствии/невалидности блокируй transport и эскалируй Оркестратору.
   - используй именно `Reply-To.InboxPath` как целевой каталог;
   - соблюдай `Reply-To.SenderID`, если он задан как часть контракта.
   - `Reply-To.FilePattern`: поддерживается только `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md`; если поле отсутствует, используй этот дефолт.
@@ -54,6 +55,9 @@
   - Команда:
     - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
     - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+    - если Оркестратор выдал pinned routing contract, передавай его:
+      - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
+      - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
   - в текущем result оставляй только краткий статус доставки.
 - Если `Reply-To` отсутствует, отправь отчет в стандартный Orchestrator inbox с корректным SenderID из входящего prompt и явно зафиксируй используемый маршрут.
 

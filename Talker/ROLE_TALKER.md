@@ -97,15 +97,19 @@ Operational rule:
 Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.
 - Передача задач оркестратору делается через единый deterministic helper:
   - скрипт: `send_orchestrator_handoff.py` (в каталоге `LOOPER_ROOT`)
-  - скрипт сам выполняет весь маршрут: `ensure/create inbox -> build handoff markdown -> create prompt via create_prompt_file.py -> verify file exists`
+  - скрипт сам выполняет весь маршрут: `fail-closed root/identity preflight -> build Route-Meta/Routing-Contract -> ensure/create inbox -> create prompt via create_prompt_file.py -> verify file exists`
   - перед запуском сохрани исходный текст пользователя в локальный файл (`<LocalUserMessageFile.md>`) без переформулировки
+  - обязательные поля identity-контракта:
+    - `--app-root "<APP_ROOT>"`
+    - `--edit-root "<EDIT_ROOT>"`
+    - `--route-session-id "<ROUTE_SESSION_ID>"`
   - первый prompt в проектной сессии (включить `Reply-To`):
-    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
-    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
   - последующие prompt в той же проектной сессии (без повторной фиксации маршрута):
-    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
-    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
-  - при успехе скрипт возвращает JSON с `delivered_file`; используй его как источник истины для подтверждения отправки.
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+  - при успехе скрипт возвращает JSON с `delivered_file` и `routing_contract_file`; используй эти поля как источник истины для подтверждения отправки.
 - Для отчетов оркестратора в Talker используй проектно-уникальный SenderID (а не просто `Orchestrator`), например:
   - `Orc_<ProjectTag>` (пример: `Orc_TestProject`)
 - `ProjectTag` определяй детерминированно: это имя конечного каталога из `<PROJECT_ROOT_PATH>`.
@@ -115,6 +119,7 @@ Operational rule:
   - `Reply-To` формируй через `send_orchestrator_handoff.py --include-reply-to` (не вручную).
   - Этот блок обязателен для первого сообщения в проектной сессии и при явной смене маршрута.
   - Если маршрут не менялся, используй `send_orchestrator_handoff.py --omit-reply-to` и не дублируй `Reply-To` в каждом следующем prompt.
+  - `Route-Meta` и `Routing-Contract` считаются обязательными для всей цепочки проектной сессии (`RouteSessionID` должен оставаться неизменным).
 - VERBATIM handoff contract (User -> Internal Agent):
   - Если пользователь просит "передай/перешли/сообщи" внутреннему агенту (например, Orchestrator), передавай текст пользователя ДОСЛОВНО.
   - Запрещено пересказывать, "оформлять ТЗ", структурировать за пользователя, сокращать, "улучшать формулировку", менять пути/имена/числа.
