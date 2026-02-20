@@ -21,6 +21,7 @@ from route_contract_utils import (
     extract_route_meta_fields,
     try_extract_routing_contract_fields,
     extract_message_meta_fields,
+    _is_relative_to,
 )
 
 
@@ -151,6 +152,41 @@ def _append_audit(audit_file: Path, record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _validate_audit_file_scope(audit_file: Path, contract: dict[str, str]) -> None:
+    r"""Validate that audit file path is within allowed scope for current sender.
+    
+    Allowed scopes:
+    1. Talker scope: AppRoot\Talker\Temp\...
+    2. Orchestrator scope: AgentsRoot\Orchestrator\Temp\...
+    3. Worker scope: AgentsRoot\Workers\<WorkerId>\Temp\...
+    """
+    app_root = ensure_abs_path("Routing-Contract.AppRoot", contract["AppRoot"])
+    agents_root = ensure_abs_path("Routing-Contract.AgentsRoot", contract["AgentsRoot"])
+    
+    talker_temp = (app_root / "Talker" / "Temp").resolve()
+    orchestrator_temp = (agents_root / "Orchestrator" / "Temp").resolve()
+    workers_root = (agents_root / "Workers").resolve()
+    audit_resolved = audit_file.resolve()
+
+    if _is_relative_to(audit_resolved, talker_temp):
+        return
+
+    if _is_relative_to(audit_resolved, orchestrator_temp):
+        return
+
+    if _is_relative_to(audit_resolved, workers_root):
+        # Strict Worker policy: AgentsRoot\Workers\<WorkerId>\Temp\...
+        rel_to_workers = audit_resolved.relative_to(workers_root)
+        parts = rel_to_workers.parts
+        if len(parts) >= 3 and parts[1] == "Temp":
+            return
+
+    raise RuntimeError(
+        f"report_audit_path_missing_or_invalid: audit file is outside allowed scope: {audit_file}; "
+        f"allowed roots: {talker_temp}, {orchestrator_temp}, {workers_root}\\<WorkerId>\\Temp"
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -174,6 +210,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--suffix", help="Optional create_prompt_file.py marker suffix.")
     parser.add_argument("--retry", type=int, default=1, help="Additional retry attempts after first send (default: 1).")
+    parser.add_argument(
+        "--audit-file",
+        required=True,
+        help="Absolute path to report_delivery_audit.jsonl (required). Must be within allowed scope.",
+    )
     return parser
 
 
@@ -245,12 +286,16 @@ def main() -> int:
         if msg_meta["ProjectTag"] != contract["ProjectTag"]:
              raise RuntimeError(f"Message-Meta.ProjectTag does not match contract: {msg_meta['ProjectTag']} vs {contract['ProjectTag']}")
 
-        audit_dir = incoming_prompt.parent
-        for p in incoming_prompt.parents:
-            if p.name == "Inbox" and p.parent.name == "Prompts":
-                audit_dir = p.parent.parent
-                break
-        audit_file = (audit_dir / "Temp" / "report_delivery_audit.jsonl").resolve()
+        # Validate audit-file argument (required, absolute, in-scope)
+        if not args.audit_file:
+            raise RuntimeError("report_audit_path_missing_or_invalid: --audit-file is required")
+        
+        audit_file = Path(args.audit_file).expanduser()
+        if not audit_file.is_absolute():
+            raise RuntimeError(f"report_audit_path_missing_or_invalid: --audit-file must be absolute path: {args.audit_file!r}")
+        
+        audit_file = audit_file.resolve()
+        _validate_audit_file_scope(audit_file, contract)
 
         if _check_audit_for_success(audit_file, msg_meta["ReportID"], contract["RouteSessionID"], contract["ProjectTag"], str(inbox)):
             result = {

@@ -21,9 +21,9 @@ When a prompt contains a valid `Reply-To:` block, use deterministic helper `send
 
 ### STEP 2: Deliver via script (mandatory)
 - PowerShell:
-  `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
 - cmd:
-  `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
 - `send_reply_to_report.py` performs:
   - Reply-To extraction and validation (`InboxPath`, `SenderID`, `FilePattern`)
   - `unsupported FilePattern` guard

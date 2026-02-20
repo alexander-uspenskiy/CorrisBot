@@ -67,8 +67,8 @@ If a final file is created "just in case" and no path is provided, place it in `
 - Нельзя подменять путь на "похожий" или "ожидаемый по умолчанию", если явно указан `Reply-To`.
 - Ответ/отчет отправляй только новым `Prompt_*.md` в `Reply-To.InboxPath`; не заменяй это сообщением только в своем `*_Result.md`.
 - Для Reply-To доставки используй deterministic helper `send_reply_to_report.py` (через `LOOPER_ROOT`):
-  - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
-  - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
+  - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
 - `send_reply_to_report.py` обязателен для Reply-To маршрута и выполняет весь транспортный цикл:
   extract/validate `Reply-To` -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
 - При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
@@ -131,9 +131,9 @@ When a prompt contains a valid `Reply-To:` block, use deterministic helper `send
 
 ### STEP 2: Deliver via script (mandatory)
 - PowerShell:
-  `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
 - cmd:
-  `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
 - `send_reply_to_report.py` performs:
   - Reply-To extraction and validation (`InboxPath`, `SenderID`, `FilePattern`)
   - `unsupported FilePattern` guard
