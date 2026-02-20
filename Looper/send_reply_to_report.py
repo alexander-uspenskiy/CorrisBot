@@ -8,6 +8,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from route_contract_utils import (
@@ -19,6 +20,7 @@ from route_contract_utils import (
     extract_reply_to_fields,
     extract_route_meta_fields,
     try_extract_routing_contract_fields,
+    extract_message_meta_fields,
 )
 
 
@@ -122,6 +124,33 @@ def _run_create_prompt(looper_root: Path, inbox: Path, report_file: Path, suffix
     return candidates[-1]
 
 
+def _check_audit_for_success(audit_file: Path, report_id: str, route_session_id: str, project_tag: str, inbox_path: str) -> bool:
+    if not audit_file.exists():
+        return False
+    try:
+        for line in audit_file.read_text(encoding="utf-8").splitlines():
+            if not line.strip(): continue
+            try:
+                record = json.loads(line)
+                if (record.get("report_id") == report_id and
+                    record.get("route_session_id") == route_session_id and
+                    record.get("project_tag") == project_tag and
+                    record.get("inbox_path") == inbox_path and
+                    record.get("result") == "ok"):
+                    return True
+            except json.JSONDecodeError:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def _append_audit(audit_file: Path, record: dict) -> None:
+    audit_file.parent.mkdir(parents=True, exist_ok=True)
+    with audit_file.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -208,6 +237,36 @@ def main() -> int:
         inbox.mkdir(parents=True, exist_ok=True)
         report_file = _materialize_report_file(args)
 
+        report_text = _read_text_file(report_file)
+        msg_meta = extract_message_meta_fields(report_text)
+        
+        if msg_meta["RouteSessionID"] != contract["RouteSessionID"]:
+             raise RuntimeError(f"Message-Meta.RouteSessionID does not match contract: {msg_meta['RouteSessionID']} vs {contract['RouteSessionID']}")
+        if msg_meta["ProjectTag"] != contract["ProjectTag"]:
+             raise RuntimeError(f"Message-Meta.ProjectTag does not match contract: {msg_meta['ProjectTag']} vs {contract['ProjectTag']}")
+
+        audit_dir = incoming_prompt.parent
+        for p in incoming_prompt.parents:
+            if p.name == "Inbox" and p.parent.name == "Prompts":
+                audit_dir = p.parent.parent
+                break
+        audit_file = (audit_dir / "Temp" / "report_delivery_audit.jsonl").resolve()
+
+        if _check_audit_for_success(audit_file, msg_meta["ReportID"], contract["RouteSessionID"], contract["ProjectTag"], str(inbox)):
+            result = {
+                "status": "ok",
+                "route_session_id": contract["RouteSessionID"],
+                "project_tag": contract["ProjectTag"],
+                "inbox_path": str(inbox),
+                "sender_id": fields.get("SenderID", "").strip(),
+                "file_pattern": file_pattern or SUPPORTED_FILE_PATTERN,
+                "report_file": str(report_file),
+                "delivered_file": "<idempotent_skip>",
+                "attempts_used": 0,
+            }
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
+
         looper_root = Path(__file__).resolve().parent
         delivered_file: Path | None = None
         last_error: Exception | None = None
@@ -229,6 +288,20 @@ def main() -> int:
                 break
             except Exception as exc:  # pragma: no cover - exercised in integration tests
                 last_error = exc
+
+        audit_record = {
+            "report_id": msg_meta["ReportID"],
+            "route_session_id": contract["RouteSessionID"],
+            "project_tag": contract["ProjectTag"],
+            "inbox_path": str(inbox),
+            "message_class": msg_meta["MessageClass"],
+            "report_type": msg_meta["ReportType"],
+            "delivered_file": str(delivered_file) if delivered_file else None,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "result": "ok" if delivered_file else "failed",
+            "error": str(last_error) if last_error else None
+        }
+        _append_audit(audit_file, audit_record)
 
         if delivered_file is None:
             raise RuntimeError(f"delivery failed after {total_attempts} attempt(s): {last_error}")

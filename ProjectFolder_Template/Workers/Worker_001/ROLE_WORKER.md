@@ -43,6 +43,7 @@
 
 ## Delivery Contract (Mandatory)
 - Отчет Оркестратору отправляется отдельным новым `Prompt_*.md` в его inbox (по `Reply-To` из входящего prompt).
+- Worker может отправлять `report` или `trace` Оркестратору, используя тот же `Message-Meta Contract`. Оркестратор решает, какие отчеты Worker-а пересылать дальше.
 - Нельзя считать, что Оркестратор сам прочитает твой `*_Result.md`. Это внутренний run-log, а не транспорт межлуперного ответа.
 - Если в задаче есть `Reply-To`:
   - `Route-Meta` в incoming prompt обязателен (`RouteSessionID`, `ProjectTag`); при отсутствии/невалидности блокируй transport и эскалируй Оркестратору.

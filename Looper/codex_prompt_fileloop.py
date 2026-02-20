@@ -79,6 +79,7 @@ class LoopRunner:
         self.warned_invalid_watermark_senders: set[str] = set()
         self.runtime_warned_once_keys: set[str] = set()
         self.last_reasoning_reload_error: Optional[str] = None
+        self.relayed_report_ids: set[str] = set()
 
     @staticmethod
     def _try_enable_ansi() -> bool:
@@ -939,6 +940,39 @@ class LoopRunner:
         validated_target = self.validate_relay_target(target, user_sender_id)
         if not validated_target:
             return
+            
+        has_message_meta_header = any(
+            line.strip() == "Message-Meta:" for line in relay_content.splitlines()
+        )
+        try:
+            from route_contract_utils import extract_message_meta_fields
+            msg_meta = extract_message_meta_fields(relay_content)
+        except Exception as exc:
+            if has_message_meta_header:
+                self.write_console_line(
+                    f"[relay] blocked: invalid Message-Meta. ({exc})",
+                    "red",
+                )
+                return
+            self.write_console_line(
+                f"[relay] Message-Meta not found, applying legacy compatibility mode. ({exc})",
+                "darkgray",
+            )
+            msg_meta = {}
+            
+        msg_class = msg_meta.get("MessageClass", "")
+        if msg_class == "trace":
+            is_trace_enabled = os.environ.get("TRACE_RELAY_ENABLED", "false").lower() == "true"
+            if not is_trace_enabled:
+                self.write_console_line(f"[relay] blocked: trace relay is disabled (Message-Meta.ReportID={msg_meta.get('ReportID')})", "darkgray")
+                return
+
+        report_id = msg_meta.get("ReportID", "")
+        if report_id:
+            if report_id in self.relayed_report_ids:
+                self.write_console_line(f"[relay] blocked: duplicate ReportID '{report_id}' detected.", "darkgray")
+                return
+            self.relayed_report_ids.add(report_id)
         
         target_inbox = self.inbox_root / validated_target
         target_inbox.mkdir(parents=True, exist_ok=True)

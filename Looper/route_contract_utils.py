@@ -60,6 +60,31 @@ def extract_reply_to_fields(prompt_text: str) -> dict[str, str]:
     return fields
 
 
+def extract_message_meta_fields(prompt_text: str) -> dict[str, str]:
+    fields = _scan_markdown_block(prompt_text, "Message-Meta:")
+    if not fields:
+        raise RuntimeError("Message-Meta block not found in payload")
+    
+    required = ["MessageClass", "ReportType", "ReportID", "RouteSessionID", "ProjectTag"]
+    missing = [key for key in required if not fields.get(key, "").strip()]
+    if missing:
+        raise RuntimeError(f"Message-Meta missing required fields: {', '.join(missing)}")
+    
+    msg_class = fields["MessageClass"].strip()
+    if msg_class not in ("report", "trace"):
+        raise RuntimeError(f"invalid Message-Meta.MessageClass: {msg_class}")
+        
+    report_type = fields["ReportType"].strip()
+    valid_types = ("phase_gate", "phase_accept", "final_summary", "question", "status")
+    if report_type not in valid_types:
+        raise RuntimeError(f"invalid Message-Meta.ReportType: {report_type}")
+        
+    ensure_safe_token("Message-Meta.ReportID", fields["ReportID"])
+    ensure_safe_token("Message-Meta.RouteSessionID", fields["RouteSessionID"])
+    
+    return {key: fields[key].strip() for key in required}
+
+
 def extract_route_meta_fields(prompt_text: str) -> dict[str, str]:
     fields = _scan_markdown_block(prompt_text, "Route-Meta:")
     session_id = fields.get("RouteSessionID", "").strip()

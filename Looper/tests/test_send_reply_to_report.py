@@ -11,13 +11,14 @@ SCRIPT_PATH = REPO_ROOT / "Looper" / "send_reply_to_report.py"
 
 
 class SendReplyToReportTests(unittest.TestCase):
-    def _run_script(self, args: list[str]) -> tuple[int, str, str]:
+    def _run_script(self, args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
         proc = subprocess.run(
             [sys.executable, str(SCRIPT_PATH), *args],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            cwd=str(cwd) if cwd else None
         )
         return proc.returncode, proc.stdout, proc.stderr
 
@@ -61,7 +62,16 @@ class SendReplyToReportTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            report_file.write_text("delivery payload", encoding="utf-8")
+            report_file.write_text(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_gate\n"
+                "- ReportID: rep_123\n"
+                "- RouteSessionID: RS_A\n"
+                "- ProjectTag: ProjectA\n\n"
+                "delivery payload", 
+                encoding="utf-8"
+            )
 
             code, stdout, stderr = self._run_script(
                 [
@@ -69,14 +79,24 @@ class SendReplyToReportTests(unittest.TestCase):
                     str(prompt_file),
                     "--report-file",
                     str(report_file),
-                ]
+                ],
+                cwd=temp_root
             )
 
             self.assertEqual(0, code, msg=stderr)
             payload = json.loads(stdout.strip())
             delivered = Path(payload["delivered_file"])
             self.assertTrue(delivered.exists())
-            self.assertEqual("delivery payload", delivered.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_gate\n"
+                "- ReportID: rep_123\n"
+                "- RouteSessionID: RS_A\n"
+                "- ProjectTag: ProjectA\n\n"
+                "delivery payload", 
+                delivered.read_text(encoding="utf-8")
+            )
             self.assertEqual(str(inbox.resolve()), payload["inbox_path"])
 
     def test_negative_unsupported_file_pattern_returns_error(self) -> None:
@@ -115,7 +135,16 @@ class SendReplyToReportTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            report_file.write_text("data", encoding="utf-8")
+            report_file.write_text(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_gate\n"
+                "- ReportID: rep_124\n"
+                "- RouteSessionID: RS_B\n"
+                "- ProjectTag: ProjectB\n\n"
+                "data", 
+                encoding="utf-8"
+            )
 
             code, _, stderr = self._run_script(
                 [
@@ -161,7 +190,16 @@ class SendReplyToReportTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            report_file.write_text("data", encoding="utf-8")
+            report_file.write_text(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_gate\n"
+                "- ReportID: rep_125\n"
+                "- RouteSessionID: RS_C\n"
+                "- ProjectTag: ProjectC\n\n"
+                "data", 
+                encoding="utf-8"
+            )
 
             code, _, stderr = self._run_script(
                 [
@@ -211,7 +249,16 @@ class SendReplyToReportTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            report_file.write_text("data", encoding="utf-8")
+            report_file.write_text(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_gate\n"
+                "- ReportID: rep_126\n"
+                "- RouteSessionID: RS_D\n"
+                "- ProjectTag: ProjectD\n\n"
+                "data", 
+                encoding="utf-8"
+            )
 
             code, _, stderr = self._run_script(
                 [
@@ -261,7 +308,16 @@ class SendReplyToReportTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            report_file.write_text("data", encoding="utf-8")
+            report_file.write_text(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_gate\n"
+                "- ReportID: rep_127\n"
+                "- RouteSessionID: RS_E\n"
+                "- ProjectTag: ProjectE\n\n"
+                "data", 
+                encoding="utf-8"
+            )
 
             code, _, stderr = self._run_script(
                 [

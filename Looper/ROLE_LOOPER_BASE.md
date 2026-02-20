@@ -81,3 +81,25 @@ If a final file is created "just in case" and no path is provided, place it in `
   extract/validate `Reply-To` + `Route-Meta` (+ `Routing-Contract` if present) -> preflight scope check -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
 - При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
 - Исключение: relay-механизм Talker (`type: relay`) может содержать verbatim payload в Result по правилам `ROLE_TALKER`.
+
+## Message-Meta Contract (Mandatory)
+
+- Все исходящие сообщения (отчеты/трассы) между луперами должны содержать top-level блок метаданных:
+  ```text
+  Message-Meta:
+  - MessageClass: report | trace
+  - ReportType: phase_gate | phase_accept | final_summary | question | status
+  - ReportID: <stable id>
+  - RouteSessionID: <must match routing contract>
+  - ProjectTag: <must match routing contract>
+  ```
+- Обязательные события для `MessageClass=report` (должны отправляться через helper, нельзя оставлять только в консоли):
+  1. Phase start gate (если включен).
+  2. Phase accept/rework decision.
+  3. Phase done gate (`PASS`/`FAIL`).
+  4. Final execution summary.
+  5. Blocking question to user (`ReportType=question`).
+- Fail-closed gate: если отправка `report` не подтверждена хелпером (нет `status=ok` и `delivered_file`), текущий turn не считается завершенным. Необходимо остановить процесс и зафиксировать `report_delivery_failed`. Никаких "console-only" отчетов.
+- Сообщения без валидного `Message-Meta` считаются невалидными для отправки.
+- `ReportID` должен быть уникальным для события и стабильным при ретраях для защиты от отправки дубликатов.
+- Эта политика относится только к сообщениям самих агентов (межлуперным), а не к сырому пользовательскому вводу.
