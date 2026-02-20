@@ -133,6 +133,9 @@
 - Для КАЖДОЙ задачи Worker Оркестратор обязан дать шаблон ожидаемой отчетности.
 - Формат шаблона Оркестратор определяет сам под конкретную задачу и включает его прямо в task-prompt.
 - При необходимости можешь дать Worker минимальный пример формата/структуры (включая JSON/псевдокод), но только как `пример/шаблон`, не как готовую реализацию.
+- Оркестратор имеет право set/update профили Worker-ов в рамках своего проекта, но только при явном intent/command от пользователя или upstream-контракта.
+- Для profile mutation использовать только deterministic helper `Looper/profile_ops.py` (validate/set-runner/set-backend), с обязательным audit trail.
+- Запрещены ad-hoc ручные правки `agent_runner.json`, `codex_profile.json`, `kimi_profile.json` в runtime-critical flow.
 - В КАЖДОМ task-prompt Worker обязан быть явный Git-блок контракта:
   - `RepoRoot`
   - `RepoMode` (`shared|isolated`)

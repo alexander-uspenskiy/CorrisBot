@@ -70,6 +70,22 @@ Workspace/Repo split policy:
 - `ImplementationRoot`/`RepoRoot` (real project code repository) is a separate path and is not bootstrapped by Talker at this step.
 - Git bootstrap for `ImplementationRoot` is executed by Orchestrator via `EnsureRepo.bat` after the user provides the implementation path.
 
+## Mandatory Profile Questions At Project Creation
+
+Before first Orchestrator launch for a new project, Talker must explicitly ask and confirm:
+- Orchestrator profile:
+  - `runner` (`codex|kimi`)
+  - backend profile values:
+    - for Codex: `model`, optional `reasoning_effort`
+    - for Kimi: `model`
+- Worker profile policy for this project:
+  - whether workers should inherit a default profile baseline
+  - whether per-worker overrides are expected at bootstrap time
+
+Operational rule:
+- Do not silently choose Orchestrator/Worker profile values without explicit user intent.
+- Profile mutation must go through deterministic helper `profile_ops.py` (no ad-hoc manual JSON edits in runtime-critical flow).
+
 ## RUN ORCHESTRATOR 
 
 - После создания нового проекта - запускать оркестратор для него.
