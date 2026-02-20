@@ -22,3 +22,6 @@ wt_layout_state.json
 *.pyc
 *.pyo
 *.pyd
+
+# Antigravity workspace
+CorrisBot.code-workspace
