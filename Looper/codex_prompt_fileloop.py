@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from agent_runners import AgentRunner, CodexRunner
+from agent_config_resolver import ResolverError, resolve_agent_config
 
 ANSI_COLORS = {
     "gray": "\x1b[37m",
@@ -60,18 +61,24 @@ class LoopRunner:
         inbox_root: Path,
         runner: AgentRunner,
         is_talker_context: bool = False,
+        cli_reasoning_effort_pinned: bool = False,
     ) -> None:
         self.worker_dir = worker_dir
         self.inbox_root = inbox_root
         self.runner = runner
+        self.launch_runner_name = runner.runner_name
+        self.launch_model = getattr(runner, "model", None)
         self.inbox_root.mkdir(parents=True, exist_ok=True)
         self.legacy_inbox_state_path = self.inbox_root / "loop_state.json"
         self.routing_state_path = self.inbox_root / "routing_state.json"
         self.console_log_path = self.inbox_root / "Console.log"
         self.is_talker_context = is_talker_context
+        self.cli_reasoning_effort_pinned = cli_reasoning_effort_pinned
         self.ansi_enabled = self._try_enable_ansi()
         self.warned_invalid_prompt_paths: set[str] = set()
         self.warned_invalid_watermark_senders: set[str] = set()
+        self.runtime_warned_once_keys: set[str] = set()
+        self.last_reasoning_reload_error: Optional[str] = None
 
     @staticmethod
     def _try_enable_ansi() -> bool:
@@ -107,6 +114,87 @@ class LoopRunner:
         if not self.inbox_root.exists():
             return []
         return sorted(p for p in self.inbox_root.iterdir() if p.is_dir())
+
+    def warn_runtime_once(self, key: str, text: str, color: str = "darkyellow") -> None:
+        if key in self.runtime_warned_once_keys:
+            return
+        self.runtime_warned_once_keys.add(key)
+        self.write_console_line(text, color)
+
+    def read_configured_runner(self) -> Optional[str]:
+        runner_path = self.worker_dir / "agent_runner.json"
+        if not runner_path.is_file():
+            return None
+        try:
+            payload = json.loads(runner_path.read_text(encoding="utf-8"))
+        except Exception:
+            self.warn_runtime_once(
+                "agent_runner_invalid_json",
+                f"[warning] agent_runner.json is invalid; runner change cannot be checked: {runner_path}",
+            )
+            return None
+        if not isinstance(payload, dict):
+            self.warn_runtime_once(
+                "agent_runner_not_object",
+                f"[warning] agent_runner.json must contain a JSON object: {runner_path}",
+            )
+            return None
+        value = payload.get("runner")
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized:
+                return normalized
+        return None
+
+    def refresh_runtime_apply_rules(self) -> None:
+        configured_runner = self.read_configured_runner()
+        if configured_runner and configured_runner != self.launch_runner_name:
+            self.warn_runtime_once(
+                f"runner_changed_{configured_runner}",
+                (
+                    "[warning] runner change applies next launch "
+                    f"(current={self.launch_runner_name}, configured={configured_runner})"
+                ),
+            )
+
+        if self.launch_runner_name != "codex":
+            return
+
+        if self.cli_reasoning_effort_pinned:
+            self.warn_runtime_once(
+                "reasoning_pinned_cli",
+                "[warning] CLI --reasoning-effort is pinned for this process; profile hot-reload is ignored.",
+            )
+            return
+
+        try:
+            resolved = resolve_agent_config(
+                agent_dir=self.worker_dir,
+                cli_runner=self.launch_runner_name,
+                cli_model=self.launch_model,
+            )
+        except ResolverError as exc:
+            if self.last_reasoning_reload_error != exc.code:
+                self.write_console_line(
+                    f"[warning] reasoning hot-reload skipped: {exc.code}",
+                    "darkyellow",
+                )
+                self.last_reasoning_reload_error = exc.code
+            return
+
+        self.last_reasoning_reload_error = None
+        effective_reasoning = str(resolved["effective"]["reasoning"] or "").strip()
+        new_reasoning = effective_reasoning or None
+        current_reasoning = getattr(self.runner, "reasoning_effort", None)
+        if current_reasoning == new_reasoning:
+            return
+        setattr(self.runner, "reasoning_effort", new_reasoning)
+        source_reasoning = str(resolved["source"]["reasoning"])
+        rendered_reasoning = effective_reasoning or ""
+        self.write_console_line(
+            f"[runtime] codex reasoning_effort updated to '{rendered_reasoning}' (source={source_reasoning})",
+            "darkgray",
+        )
 
     @staticmethod
     def parse_prompt_marker(marker: str) -> Optional[PromptSortKey]:
@@ -971,6 +1059,7 @@ class LoopRunner:
 
             self.write_console_line(f"Processing {sender_id}/{prompt_name}")
             self.append_result_header(result_path, prompt_name)
+            self.refresh_runtime_apply_rules()
 
             user_prompt_text = prompt_path.read_text(encoding="utf-8")
             stop_command = self.parse_stop_command(user_prompt_text)
@@ -1179,6 +1268,7 @@ def main() -> int:
         inbox_root=inbox_root,
         runner=runner,
         is_talker_context=bool(args.talker_routing),
+        cli_reasoning_effort_pinned=bool(args.reasoning_effort),
     )
     loop_runner.run_forever()
     return 0
