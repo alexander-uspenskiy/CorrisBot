@@ -19,6 +19,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-root", required=True, help="Project root path.")
     parser.add_argument("agent_paths", nargs="+", help="One or more looper agent paths.")
     parser.add_argument("--runner", choices=["codex", "kimi"], help="Runner override for StartLoopsInWT.bat.")
+    parser.add_argument("--model", help="Model override for StartLoopsInWT.bat.")
     parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
@@ -32,6 +33,8 @@ def _run_one(start_bat: Path, project_root: Path, agent_path: str, args: argpars
     cmd = ["cmd", "/c", str(start_bat), str(project_root), agent_path]
     if args.runner:
         cmd.extend(["--runner", args.runner])
+    if args.model:
+        cmd.extend(["--model", args.model])
     if args.reasoning_effort:
         cmd.extend(["--reasoning-effort", args.reasoning_effort])
     if args.dry_run:

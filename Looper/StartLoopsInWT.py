@@ -23,6 +23,14 @@ DEFAULT_LAYOUT: dict[str, Any] = {
 }
 LOCK_TIMEOUT_SECONDS = 20.0
 LOCK_STALE_SECONDS = 120.0
+BAT_ENV_REQUIRED_KEYS = (
+    "RUNNER",
+    "MODEL",
+    "REASONING_EFFORT",
+    "SOURCE_RUNNER",
+    "SOURCE_MODEL",
+    "SOURCE_REASONING",
+)
 
 
 def now_iso() -> str:
@@ -224,13 +232,87 @@ def format_args_for_display(args: list[str]) -> str:
     return " ".join(parts)
 
 
+def decode_bridge_value(value: str) -> str:
+    if value.startswith("hex_") and re.fullmatch(r"hex_[0-9a-fA-F]+", value):
+        try:
+            return bytes.fromhex(value[4:]).decode("utf-8")
+        except Exception:
+            return value
+    return value
+
+
+def parse_bat_env_output(stdout_text: str) -> dict[str, str]:
+    env_map: dict[str, str] = {}
+    for raw_line in stdout_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lower = line.lower()
+        if not lower.startswith("set "):
+            continue
+        payload = line[4:].strip()
+        if payload.startswith('"') and payload.endswith('"') and len(payload) >= 2:
+            payload = payload[1:-1]
+        if "=" not in payload:
+            continue
+        key, value = payload.split("=", 1)
+        env_map[key.strip()] = decode_bridge_value(value.strip())
+    missing = [key for key in BAT_ENV_REQUIRED_KEYS if key not in env_map]
+    if missing:
+        raise RuntimeError(f"resolver bridge output missing keys: {', '.join(missing)}")
+    return env_map
+
+
+def resolve_agent_launch_config(
+    agent_dir: Path,
+    cli_runner: str | None,
+    cli_model: str | None,
+    cli_reasoning_effort: str | None,
+) -> dict[str, str]:
+    bridge_script = (SCRIPT_DIR / "resolve_agent_config.py").resolve()
+    if not bridge_script.is_file():
+        raise RuntimeError(f"resolver bridge script not found: {bridge_script}")
+
+    cmd = [
+        sys.executable,
+        str(bridge_script),
+        "--agent-dir",
+        str(agent_dir),
+        "--format",
+        "bat_env",
+    ]
+    if cli_runner:
+        cmd.extend(["--runner", cli_runner])
+    if cli_model:
+        cmd.extend(["--model", cli_model])
+    if cli_reasoning_effort:
+        cmd.extend(["--reasoning-effort", cli_reasoning_effort])
+
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode != 0:
+        err_line = next((line.strip() for line in (proc.stderr or "").splitlines() if line.strip()), "")
+        err_code = err_line or f"bridge_exit_{proc.returncode}"
+        raise RuntimeError(f"resolver bridge failed: {err_code}")
+    return parse_bat_env_output(proc.stdout or "")
+
+
 def get_loop_invocation(
     loop_bat_path: Path,
     project_root: Path,
     agent_path: str,
+    model: str | None = None,
     reasoning_effort: str | None = None,
 ) -> str:
     cmd = f'"{loop_bat_path}" "{project_root}" "{agent_path}"'
+    if model:
+        cmd += f' --model "{model}"'
     if reasoning_effort:
         cmd += f" --reasoning-effort {reasoning_effort}"
     return cmd
@@ -460,9 +542,13 @@ def parse_args() -> tuple[argparse.ArgumentParser, argparse.Namespace]:
     parser.add_argument("--runner", default=None, choices=["codex", "kimi"],
                         help="CLI agent backend: codex (default) or kimi.")
     parser.add_argument(
+        "--model",
+        help="CLI model override forwarded via resolver bridge.",
+    )
+    parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
-        help="Per-call reasoning override for Codex runner.",
+        help="Per-call reasoning override forwarded via resolver bridge.",
     )
     return parser, parser.parse_args()
 
@@ -485,15 +571,22 @@ def main() -> int:
 
     config_raw = load_json_file(config_path)
     layout: dict[str, Any] = dict(DEFAULT_LAYOUT)
-    for key, value in config_raw.items():
-        layout[key] = value
-    # Determine runner type (codex or kimi)
-    # Priority: CLI argument > config file > default
-    runner = args.runner or str(config_raw.get("runner", "codex")).lower()
-    if runner not in ("codex", "kimi"):
-        runner = "codex"
-    if args.reasoning_effort and runner != "codex":
-        parser.error("--reasoning-effort is supported only for runner=codex")
+    for key in DEFAULT_LAYOUT:
+        if key in config_raw:
+            layout[key] = config_raw[key]
+
+    resolved_env = resolve_agent_launch_config(
+        agent_dir=agent_dir,
+        cli_runner=args.runner,
+        cli_model=args.model,
+        cli_reasoning_effort=args.reasoning_effort,
+    )
+    runner = resolved_env["RUNNER"].lower()
+    model = resolved_env["MODEL"]
+    reasoning_effort = resolved_env["REASONING_EFFORT"] or None
+    source_runner = resolved_env["SOURCE_RUNNER"]
+    source_model = resolved_env["SOURCE_MODEL"]
+    source_reasoning = resolved_env["SOURCE_REASONING"]
 
     project_tag = get_project_tag(project_root)
     window_template = str(layout.get("window_name_template", DEFAULT_LAYOUT["window_name_template"]))
@@ -554,7 +647,8 @@ def main() -> int:
             loop_bat_path,
             project_root,
             agent_path,
-            reasoning_effort=args.reasoning_effort,
+            model=model,
+            reasoning_effort=reasoning_effort,
         )
         cmd_line = f"title {escape_for_cmd(pane_title)} && {loop_cmd}"
         absolute_tab_index = tab_index + tab_index_offset
@@ -584,6 +678,11 @@ def main() -> int:
         print(f"Window name:  {window_name}")
         print(f"Target:       tab={tab_index + 1} (absolute {absolute_tab_index + 1}), pane={pane_index + 1}")
         print(f"State file:   {state_path}")
+        print(
+            f"Resolved:     runner={runner} (source={source_runner}), "
+            f"model={model} (source={source_model}), "
+            f"reasoning={reasoning_effort or '<empty>'} (source={source_reasoning})"
+        )
 
         if args.dry_run:
             print("[dry-run] wt " + format_args_for_display(wt_args))
@@ -620,7 +719,11 @@ def main() -> int:
                 "tab_name_prefix": tab_name_prefix,
                 "tab_index_offset": tab_index_offset,
                 "agent_slots": slots,
-                "runner": runner,
+                "resolved_runner": runner,
+                "resolved_model": model,
+                "source_runner": source_runner,
+                "source_model": source_model,
+                "source_reasoning": source_reasoning,
                 "updated_at": now_iso(),
             },
         )

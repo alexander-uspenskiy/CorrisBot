@@ -113,12 +113,14 @@ class CodexRunner(AgentRunner):
         approval_policy: str = "never",
         web_search_enabled: bool = False,
         dangerously_bypass_sandbox: bool = True,
+        model: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
     ):
         self.sandbox_mode = sandbox_mode
         self.approval_policy = approval_policy
         self.web_search_enabled = web_search_enabled
         self.dangerously_bypass_sandbox = dangerously_bypass_sandbox
+        self.model = model
         self.reasoning_effort = reasoning_effort
         self._codex_bin_hint = codex_bin  # сохраняем hint до вызова resolve
         self._executable = self.resolve_executable()
@@ -171,6 +173,8 @@ class CodexRunner(AgentRunner):
             base_cmd.extend(["-a", self.approval_policy, "-s", self.sandbox_mode])
         if not self.web_search_enabled:
             base_cmd.extend(["-c", "tools.web_search=false"])
+        if self.model:
+            base_cmd.extend(["-m", self.model])
         if self.reasoning_effort:
             base_cmd.extend(["-c", f"model_reasoning_effort={self.reasoning_effort}"])
         if session_id:
@@ -285,8 +289,9 @@ class KimiRunner(AgentRunner):
     def runner_name(self) -> str:
         return "kimi"
 
-    def __init__(self):
+    def __init__(self, model: Optional[str] = None):
         self._executable = self.resolve_executable()
+        self.model = model
         self._last_temp_file: Optional[str] = None
         self._sessions_before: Optional[set[str]] = None
 
@@ -306,6 +311,8 @@ class KimiRunner(AgentRunner):
             "--yolo",
             "-w", str(work_dir),
         ]
+        if self.model:
+            cmd.extend(["--model", self.model])
         if session_id:
             # Resume existing session
             cmd.extend(["--session", session_id])

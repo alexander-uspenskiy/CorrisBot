@@ -1114,6 +1114,10 @@ def parse_args() -> argparse.Namespace:
         help="CLI agent backend to use (default: codex).",
     )
     parser.add_argument(
+        "--model",
+        help="Optional model override passed to the active CLI backend.",
+    )
+    parser.add_argument(
         "--reasoning-effort",
         choices=["low", "medium", "high"],
         help="Per-call reasoning override for Codex only.",
@@ -1160,12 +1164,13 @@ def main() -> int:
             approval_policy=args.approval,
             web_search_enabled=args.allow_web_search,
             dangerously_bypass_sandbox=args.dangerously_bypass_sandbox,
+            model=args.model,
             reasoning_effort=args.reasoning_effort,
         )
     elif args.runner == "kimi":
         # KimiRunner добавляется на Этапе 3. До реализации --runner kimi даст ImportError.
         from agent_runners import KimiRunner
-        runner = KimiRunner()
+        runner = KimiRunner(model=args.model)
     else:
         raise RuntimeError(f"Unknown runner: {args.runner}")
 
