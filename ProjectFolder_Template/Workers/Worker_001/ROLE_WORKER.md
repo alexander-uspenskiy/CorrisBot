@@ -54,11 +54,11 @@
   - для доставки строго используй deterministic helper из `ROLE_LOOPER_BASE`:
     `send_reply_to_report.py` (extract/validate Reply-To -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify + retry once).
   - Команда:
-    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
-    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<ProjectRoot>\Workers\<WorkerId>\Temp\report_delivery_audit.jsonl"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<ProjectRoot>\Workers\<WorkerId>\Temp\report_delivery_audit.jsonl"`
     - если Оркестратор выдал pinned routing contract, передавай его:
-      - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
-      - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
+      - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<ProjectRoot>\Workers\<WorkerId>\Temp\report_delivery_audit.jsonl"`
+      - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<ProjectRoot>\Workers\<WorkerId>\Temp\report_delivery_audit.jsonl"`
   - в текущем result оставляй только краткий статус доставки.
 - Если `Reply-To` отсутствует, отправь отчет в стандартный Orchestrator inbox с корректным SenderID из входящего prompt и явно зафиксируй используемый маршрут.
 

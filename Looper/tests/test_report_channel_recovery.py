@@ -168,10 +168,8 @@ class TestReportChannelRecovery(unittest.TestCase):
             agents_root.mkdir(parents=True, exist_ok=True)
             edit_root.mkdir(parents=True, exist_ok=True)
             
-            # The audit log lives in Path.cwd() / "Temp" / "report_delivery_audit.jsonl"
-            # Since script sets it to Path.cwd(), we should set cwd during subprocess to temp_dir
-            audit_dir = temp_root / "Temp"
-            audit_file = audit_dir / "report_delivery_audit.jsonl"
+            # The audit log path is now explicitly passed via --audit-file
+            audit_file = talker_root / "Temp" / "report_delivery_audit.jsonl"
             
             inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectX"
             prompt_file = temp_root / "incoming.md"
@@ -216,8 +214,13 @@ class TestReportChannelRecovery(unittest.TestCase):
 
             # Execution 1
             proc1 = subprocess.run(
-                [sys.executable, str(SCRIPT_PATH), "--incoming-prompt", str(prompt_file), "--report-file", str(report_file)],
-                capture_output=True, text=True, encoding="utf-8", cwd=str(temp_root)
+                [
+                    sys.executable, str(SCRIPT_PATH), 
+                    "--incoming-prompt", str(prompt_file), 
+                    "--report-file", str(report_file),
+                    "--audit-file", str(audit_file),
+                ],
+                capture_output=True, text=True, encoding="utf-8"
             )
             self.assertEqual(0, proc1.returncode, proc1.stderr)
             out1 = json.loads(proc1.stdout.strip())
@@ -233,8 +236,13 @@ class TestReportChannelRecovery(unittest.TestCase):
             
             # Execution 2 (Idempotency skip)
             proc2 = subprocess.run(
-                [sys.executable, str(SCRIPT_PATH), "--incoming-prompt", str(prompt_file), "--report-file", str(report_file)],
-                capture_output=True, text=True, encoding="utf-8", cwd=str(temp_root)
+                [
+                    sys.executable, str(SCRIPT_PATH), 
+                    "--incoming-prompt", str(prompt_file), 
+                    "--report-file", str(report_file),
+                    "--audit-file", str(audit_file),
+                ],
+                capture_output=True, text=True, encoding="utf-8"
             )
             self.assertEqual(0, proc2.returncode)
             out2 = json.loads(proc2.stdout.strip())

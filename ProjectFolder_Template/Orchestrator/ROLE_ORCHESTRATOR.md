@@ -52,8 +52,8 @@
   - Для любой отправки по этому маршруту используй deterministic helper из `ROLE_LOOPER_BASE`:
     `send_reply_to_report.py` (extract/validate Reply-To -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify + retry once).
   - Команда:
-    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --report-file "<LocalReportFile.md>"`
-    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --report-file "<LocalReportFile.md>"`
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --report-file "<LocalReportFile.md>" --audit-file "<ProjectRoot>\Orchestrator\Temp\report_delivery_audit.jsonl"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<ProjectRoot>\Orchestrator\Temp\routing_contract.json" --audit-file "<ProjectRoot>\Orchestrator\Temp\report_delivery_audit.jsonl" --report-file "<LocalReportFile.md>"`
   - В текущем result оставляй только краткий статус доставки.
 
 ## Delegation Transport Contract (Worker <-> Orchestrator)

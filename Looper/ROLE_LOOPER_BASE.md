@@ -72,11 +72,15 @@ If a final file is created "just in case" and no path is provided, place it in `
 - Нельзя подменять путь на "похожий" или "ожидаемый по умолчанию", если явно указан `Reply-To`.
 - Ответ/отчет отправляй только новым `Prompt_*.md` в `Reply-To.InboxPath`; не заменяй это сообщением только в своем `*_Result.md`.
 - Для Reply-To доставки используй deterministic helper `send_reply_to_report.py` (через `LOOPER_ROOT`):
-  - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
-  - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>"`
+  - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
+  - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
   - если у агента есть pinned `routing_contract.json`, передавай его явно:
-    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
-    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>"`
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
+  - `--audit-file` (обязательный): абсолютный путь к `report_delivery_audit.jsonl` для аудита доставки. Допустимые расположения:
+    - Talker: `<AppRoot>\Talker\Temp\report_delivery_audit.jsonl`
+    - Orchestrator: `<AgentsRoot>\Orchestrator\Temp\report_delivery_audit.jsonl`
+    - Worker: `<AgentsRoot>\Workers\<WorkerId>\Temp\report_delivery_audit.jsonl`
 - `send_reply_to_report.py` обязателен для Reply-To маршрута и выполняет весь транспортный цикл:
   extract/validate `Reply-To` + `Route-Meta` (+ `Routing-Contract` if present) -> preflight scope check -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
 - При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
