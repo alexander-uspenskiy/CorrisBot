@@ -48,7 +48,7 @@ for %%D in ("" "Workers" "Orchestrator" "Temp" "AgentRunner" "Orchestrator\Outpu
   )
 )
 
-for %%F in (Info.md ROLE_ORCHESTRATOR.md agent_runner.json codex_profile.json kimi_profile.json) do (
+for %%F in (Info.md ROLE_ORCHESTRATOR.md CR_REPORT_TEMPLATE.md agent_runner.json codex_profile.json kimi_profile.json) do (
   if not exist "%TEMPLATE_ROOT%\Orchestrator\%%F" (
     echo Missing required source file: "%TEMPLATE_ROOT%\Orchestrator\%%F"
     exit /b 6

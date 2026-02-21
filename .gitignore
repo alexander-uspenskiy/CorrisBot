@@ -23,5 +23,9 @@ wt_layout_state.json
 *.pyo
 *.pyd
 
+# Telegram Gateway runtime state
+Gateways/Telegram/gateway_delivery_state.json
+Gateways/Telegram/sessions/
+
 # Antigravity workspace
 CorrisBot.code-workspace

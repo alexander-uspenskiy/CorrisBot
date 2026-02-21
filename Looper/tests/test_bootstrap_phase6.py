@@ -58,6 +58,7 @@ class BootstrapPhase6Tests(unittest.TestCase):
                 project_root / "Orchestrator" / "agent_runner.json",
                 project_root / "Orchestrator" / "codex_profile.json",
                 project_root / "Orchestrator" / "kimi_profile.json",
+                project_root / "Orchestrator" / "CR_REPORT_TEMPLATE.md",
             ]
             required_worker_files = [
                 project_root / "Workers" / "Worker_002" / "agent_runner.json",
