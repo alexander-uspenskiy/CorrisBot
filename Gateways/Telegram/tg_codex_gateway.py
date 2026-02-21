@@ -643,7 +643,7 @@ def _get_sender_chat(sender_id: str) -> Optional[int]:
   mapping = _DELIVERY_STATE.get("sender_chat_ids", {})
   raw = mapping.get(sender_id)
   if raw is None:
-    return None
+    return ALLOWED_CHAT_ID_INT
   try:
     return int(raw)
   except Exception:
