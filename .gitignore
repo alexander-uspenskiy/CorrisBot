@@ -4,6 +4,7 @@ Temp/
 # Looper runtime state
 **/Prompts/Inbox/Console.log
 **/Prompts/Inbox/*/loop_state.json
+**/Prompts/Inbox/routing_state.json
 
 # Prompt files and results (runtime communication, not source code)
 **/Prompts/Inbox/*/*.md

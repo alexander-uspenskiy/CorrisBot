@@ -480,6 +480,7 @@ class LoopRunner:
         lines: list[str] = []
         started_commands: dict[str, bool] = {}
         saw_turn_completed = False
+        has_valid_json_action = False
         with result_path.open("a", encoding="utf-8") as result_file:
             if stdin_text is not None and proc.stdin:
                 try:
@@ -501,6 +502,8 @@ class LoopRunner:
                     events = self.runner.parse_output_line(line, started_commands)
                     for event in events:
                         ev = event["event"]
+                        if ev in ("reasoning", "agent_message", "command_started", "command_completed"):
+                            has_valid_json_action = True
                         if ev == "reasoning":
                             self.write_console_line(f"[reasoning] {event['text']}", "darkgray")
                         elif ev == "agent_message":
@@ -561,6 +564,20 @@ class LoopRunner:
                 return_code = 0 if polled is None else (0 if polled != 0 else polled)
             else:
                 return_code = proc.wait()
+
+            if return_code == 0 and not has_valid_json_action:
+                self.write_console_line("[error] Process exited with 0 but no valid JSON actions/messages were produced.", "red")
+                non_json_lines = [l for l in lines if not (l.strip().startswith("{") and l.strip().endswith("}"))]
+                
+                error_body = "[System Fail-Closed]\nThe CLI agent process exited successfully (0) but failed to generate any valid JSON payload (e.g. agent message or tool command)."
+                if non_json_lines:
+                    self.write_console_line("Raw output:\n" + "\n".join(non_json_lines), "darkgray")
+                    error_body += "\n\nRaw CLI Output:\n" + "\n".join(non_json_lines)
+                
+                # Emit to Result.md so the Telegram Gateway can relay this message to the user!
+                self.append_gateway_agent_message(result_path, error_body)
+                
+                return_code = 1
 
         # Determine session_id from output (Codex) or filesystem (Kimi)
         detected_session_id = self.runner.extract_session_id(lines)
