@@ -247,8 +247,7 @@ def main() -> int:
             raise FileNotFoundError(f"app root not found: {app_root}")
 
         edit_root = ensure_abs_path("edit-root", args.edit_root)
-        if not edit_root.exists():
-            raise FileNotFoundError(f"edit root not found: {edit_root}")
+
 
         talker_root_arg = args.talker_root or os.environ.get("TALKER_ROOT", "")
         if not talker_root_arg.strip():
