@@ -60,6 +60,11 @@ If a final file is created "just in case" and no path is provided, place it in `
   - `InboxPath` не плейсхолдер вида `<...>`.
 - Если есть неоднозначность, считать `Reply-To` невалидным и явно зафиксировать проблему маршрутизации вместо молчаливого reroute.
 - Используй значения `Reply-To` как источник истины: `InboxPath` (куда писать), `SenderID` (если задан), `FilePattern`.
+- Для fail-closed identity-контракта текущей сессии дополнительно требуй top-level блок `Route-Meta`:
+  - `- RouteSessionID: <...>`
+  - `- ProjectTag: <...>`
+- Если `Route-Meta` отсутствует/невалиден, блокируй transport и эскалируй upstream.
+- Если во входящем prompt есть `Routing-Contract`, `Route-Meta.RouteSessionID` и `Route-Meta.ProjectTag` обязаны совпадать с ним.
 - Для межлуперного транспорта поддерживается только стандартный pattern:
   `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md` (допустим суффикс `_suffix`, где `suffix` = `[A-Za-z0-9]+`).
 - Если `Reply-To.FilePattern` отсутствует, используй стандартный pattern.
@@ -69,10 +74,39 @@ If a final file is created "just in case" and no path is provided, place it in `
 - Для Reply-To доставки используй deterministic helper `send_reply_to_report.py` (через `LOOPER_ROOT`):
   - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
   - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
+  - если у агента есть pinned `routing_contract.json`, передавай его явно:
+    - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
+    - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
+  - `--audit-file` (обязательный): абсолютный путь к `report_delivery_audit.jsonl` для аудита доставки. Допустимые расположения:
+    - Talker: `<AppRoot>\Talker\Temp\report_delivery_audit.jsonl`
+    - Orchestrator: `<AgentsRoot>\Orchestrator\Temp\report_delivery_audit.jsonl`
+    - Worker: `<AgentsRoot>\Workers\<WorkerId>\Temp\report_delivery_audit.jsonl`
 - `send_reply_to_report.py` обязателен для Reply-To маршрута и выполняет весь транспортный цикл:
-  extract/validate `Reply-To` -> ensure/create inbox -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
+  extract/validate `Reply-To` + `Route-Meta` (+ `Routing-Contract` if present) -> preflight scope check -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
 - При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
 - Исключение: relay-механизм Talker (`type: relay`) может содержать verbatim payload в Result по правилам `ROLE_TALKER`.
+
+## Message-Meta Contract (Mandatory)
+
+- Все исходящие сообщения (отчеты/трассы) между луперами должны содержать top-level блок метаданных:
+  ```text
+  Message-Meta:
+  - MessageClass: report | trace
+  - ReportType: phase_gate | phase_accept | final_summary | question | status
+  - ReportID: <stable id>
+  - RouteSessionID: <must match routing contract>
+  - ProjectTag: <must match routing contract>
+  ```
+- Обязательные события для `MessageClass=report` (должны отправляться через helper, нельзя оставлять только в консоли):
+  1. Phase start gate (если включен).
+  2. Phase accept/rework decision.
+  3. Phase done gate (`PASS`/`FAIL`).
+  4. Final execution summary.
+  5. Blocking question to user (`ReportType=question`).
+- Fail-closed gate: если отправка `report` не подтверждена хелпером (нет `status=ok` и `delivered_file`), текущий turn не считается завершенным. Необходимо остановить процесс и зафиксировать `report_delivery_failed`. Никаких "console-only" отчетов.
+- Сообщения без валидного `Message-Meta` считаются невалидными для отправки.
+- `ReportID` должен быть уникальным для события и стабильным при ретраях для защиты от отправки дубликатов.
+- Эта политика относится только к сообщениям самих агентов (межлуперным), а не к сырому пользовательскому вводу.
 
 # ROLE TALKER
 # TALKER ROLE
@@ -370,15 +404,19 @@ Operational rule:
 Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.
 - Передача задач оркестратору делается через единый deterministic helper:
   - скрипт: `send_orchestrator_handoff.py` (в каталоге `LOOPER_ROOT`)
-  - скрипт сам выполняет весь маршрут: `ensure/create inbox -> build handoff markdown -> create prompt via create_prompt_file.py -> verify file exists`
+  - скрипт сам выполняет весь маршрут: `fail-closed root/identity preflight -> build Route-Meta/Routing-Contract -> ensure/create inbox -> create prompt via create_prompt_file.py -> verify file exists`
   - перед запуском сохрани исходный текст пользователя в локальный файл (`<LocalUserMessageFile.md>`) без переформулировки
+  - обязательные поля identity-контракта:
+    - `--app-root "<APP_ROOT>"`
+    - `--edit-root "<EDIT_ROOT>"`
+    - `--route-session-id "<ROUTE_SESSION_ID>"`
   - первый prompt в проектной сессии (включить `Reply-To`):
-    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
-    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
   - последующие prompt в той же проектной сессии (без повторной фиксации маршрута):
-    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
-    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
-  - при успехе скрипт возвращает JSON с `delivered_file`; используй его как источник истины для подтверждения отправки.
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+  - при успехе скрипт возвращает JSON с `delivered_file` и `routing_contract_file`; используй эти поля как источник истины для подтверждения отправки.
 - Для отчетов оркестратора в Talker используй проектно-уникальный SenderID (а не просто `Orchestrator`), например:
   - `Orc_<ProjectTag>` (пример: `Orc_TestProject`)
 - `ProjectTag` определяй детерминированно: это имя конечного каталога из `<PROJECT_ROOT_PATH>`.
@@ -388,6 +426,7 @@ Operational rule:
   - `Reply-To` формируй через `send_orchestrator_handoff.py --include-reply-to` (не вручную).
   - Этот блок обязателен для первого сообщения в проектной сессии и при явной смене маршрута.
   - Если маршрут не менялся, используй `send_orchestrator_handoff.py --omit-reply-to` и не дублируй `Reply-To` в каждом следующем prompt.
+  - `Route-Meta` и `Routing-Contract` считаются обязательными для всей цепочки проектной сессии (`RouteSessionID` должен оставаться неизменным).
 - VERBATIM handoff contract (User -> Internal Agent):
   - Если пользователь просит "передай/перешли/сообщи" внутреннему агенту (например, Orchestrator), передавай текст пользователя ДОСЛОВНО.
   - Запрещено пересказывать, "оформлять ТЗ", структурировать за пользователя, сокращать, "улучшать формулировку", менять пути/имена/числа.
@@ -406,6 +445,8 @@ Operational rule:
   - это безусловный канал "внутренний агент → пользователь через Talker";
   - **КРИТИЧНО**: ты НЕ должен создавать файлы вручную в inbox пользователя (`tg_*`). Ретрансляция выполняется автоматически скриптом looper после твоей обработки;
   - VERBATIM relay contract (Internal Agent -> User): payload внутреннего агента передается пользователю без купюр/пересказа/редакции/комментариев Talker.
+  - **КРИТИЧНО**: Никогда не пытайся угадать важность сообщения ("importance") по его тексту (не ищи тексты типа "PASS", "итог" и т.п.). Используй только явный `MessageClass` из `Message-Meta`.
+  - Отчеты (`report`) всегда пересылаются пользователю. Трассировка (`trace`) пересылается только если включен `TRACE_RELAY_ENABLED=true` в конфигурации.
   - формат ответа для автоматической ретрансляции: в своём Result-файле используй YAML-блок relay:
 
     ```

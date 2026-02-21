@@ -1,5 +1,5 @@
 {
   "version": 1,
-  "model": "codex-5.3",
+  "model": "gpt-5.3-codex",
   "reasoning_effort": "high"
 }
