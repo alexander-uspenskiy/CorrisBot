@@ -11,32 +11,39 @@ Path note:
 - Для внешних рабочих каталогов следуй `Path Allocation Policy` из `ROLE_LOOPER_BASE`.
 
 # Создание структуры файлов агента лупера
-- Выбираем название агенту. Должно быть простым, совместимым с файловой системой.
+
+Скрипт создает папку агента **внутри текущего рабочего каталога**.
+
+- Выбираем название агенту (например, `Worker_001` или `Project_Orchestrator`).
 - Сначала создается структура файлов для работы лупера:
-Run the script from the target parent folder, or call it by full path.  
+1. Перейдите в папку, где хотите создать каталог для агента (`cd` или `Set-Location`).
+2. Запустите скрипт создания из `%LOOPER_ROOT%`.
+
 Examples:
-- PowerShell: `Set-Location "<ProjectPath>\Workers"; & "$env:LOOPER_ROOT\CreateWorkerStructure.bat" "Worker_002" "Orc1"`
-- cmd: `cd /d "<ProjectPath>\Workers" && "%LOOPER_ROOT%\CreateWorkerStructure.bat" "Worker_002" "Orc1"`
-(quotes are required if arguments contain spaces; using quotes always is recommended).
-(Здесь нюанс, что для Workers агентов есть отдельный подкаталог `Workers` в каталоге проекта).
-Переходим в папку, где хотим создать каталог для агента, и запускаем оттуда. 
-Первый праметр - это имя агента, второй - `SenderID` того, от кого этот агент ожидает входящие prompt-файлы (например, `Orc1`, `Orchestrator`, `Talker`).
+- PowerShell (создание в текущей папке):
+  `Set-Location "<ParentDirPath>"; & "$env:LOOPER_ROOT\CreateWorkerStructure.bat" "<AgentFolderName>" "<ExpectedSenderID>"`
+- cmd:
+  `cd /d "<ParentDirPath>" && "%LOOPER_ROOT%\CreateWorkerStructure.bat" "<AgentFolderName>" "<ExpectedSenderID>"`
+
+Параметры:
+- `AgentFolderName`: Имя создаваемого каталога (простое имя, не путь).
+- `ExpectedSenderID`: Логический ID отправителя, от которого этот агент будет принимать задания (например, `Talker`, `Orc_Project1`).
 Важно: второй параметр - это логическое имя отправителя (SenderID), а не имя каталога. Оркестратор может быть расположен в каталоге `Orchestrator`, но использовать SenderID `Orc1`.
 
 # Запуск агента-лупера
 - После создания файловой структуры запускается сам Лупер (как скрипт-терминала + ИИ агент). 
 - Создается через запуск `StartLoopsInWT.bat` через `LOOPER_ROOT`:
-  - PowerShell: `& "$env:LOOPER_ROOT\StartLoopsInWT.bat" "<ProjectPath>" "Workers\Worker_002"`
-  - cmd: `"%LOOPER_ROOT%\StartLoopsInWT.bat" "<ProjectPath>" "Workers\Worker_002"`
-Первый параметр - это путь до проекта, второй - название лупера. 
+  - PowerShell: `& "$env:LOOPER_ROOT\StartLoopsInWT.bat" "<ProjectRootPath>" "<RelativePathToAgent>"`
+  - cmd: `"%LOOPER_ROOT%\StartLoopsInWT.bat" "<ProjectRootPath>" "<RelativePathToAgent>"`
+Первый параметр - это путь до проекта, второй - относительный путь до агента внутри проекта. 
 Проектов в одном приложении может быть много (Пример вымышленный искать не нужно).
 Например, `c:\Minesweeper\.MigrationToIOs`  - Это проект миграции на iOs.
 А может быть `c:\Minesweeper\.UIRefactoring` - это проект рефакторинга.
 - Если нужно запустить несколько луперов, используй deterministic helper:
-  - PowerShell: `py "$env:LOOPER_ROOT\start_loops_sequential.py" --project-root "<ProjectPath>" "Workers\Worker_002" "Workers\Worker_003"`
-  - cmd: `py "%LOOPER_ROOT%\start_loops_sequential.py" --project-root "<ProjectPath>" "Workers\Worker_002" "Workers\Worker_003"`
+  - PowerShell: `py "$env:LOOPER_ROOT\start_loops_sequential.py" --project-root "<ProjectRootPath>" "<RelPath1>" "<RelPath2>"`
+  - cmd: `py "%LOOPER_ROOT%\start_loops_sequential.py" --project-root "<ProjectRootPath>" "<RelPath1>" "<RelPath2>"`
 - Для smoke/безопасной проверки допускается `--dry-run`:
-  - `py "$env:LOOPER_ROOT\start_loops_sequential.py" --project-root "<ProjectPath>" --dry-run "Workers\Worker_002" "Workers\Worker_003"`
+  - `py "$env:LOOPER_ROOT\start_loops_sequential.py" --project-root "<ProjectRootPath>" --dry-run "<RelPath1>" "<RelPath2>"`
 - `start_loops_sequential.py` гарантирует последовательный запуск и stop-on-first-error.
 - Параллелизация делается на уровне задач/исполнителей после старта, а не на уровне одновременного старта WT-панелей.
 
