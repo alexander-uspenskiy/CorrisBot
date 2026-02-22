@@ -15,7 +15,7 @@ import sys
 from agent_config_resolver import ResolverError, resolve_agent_config
 
 
-SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9._-]*$")
+SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9._/-]*$")
 
 
 class _MachineCodeArgumentParser(argparse.ArgumentParser):

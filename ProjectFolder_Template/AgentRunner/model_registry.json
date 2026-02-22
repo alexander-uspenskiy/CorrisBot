@@ -12,9 +12,9 @@
     ]
   },
   "kimi": {
-    "default_model": "kimi-k2",
+    "default_model": "kimi-code/kimi-for-coding",
     "models": [
-      "kimi-k2"
+      "kimi-code/kimi-for-coding"
     ]
   }
 }
