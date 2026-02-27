@@ -448,7 +448,7 @@ class LoopRunner:
             "  - cmd: `py \"%LOOPER_ROOT%\\create_prompt_file.py\" create --inbox \"<InboxPath>\" --from-file \"<LocalReportFile.md>\"`.\n"
             "- Do not handcraft Prompt_*.md filenames in WriteFile/Shell commands.\n"
             f"{routing_rules}"
-            "- Do not use internet/network resources (no web access, no API calls, no downloads).\n\n"
+            "- Do not use internet/network resources (no web access, no API calls, no downloads) UNLESS explicitly authorized by the current task.\n\n"
             f"Sender ID: {sender_id}\n\n"
             f"{routing_context}"
             f"{safe_projection}"
