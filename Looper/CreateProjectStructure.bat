@@ -62,13 +62,13 @@ for %%F in (Info.md ROLE_ORCHESTRATOR.md CR_REPORT_TEMPLATE.md agent_runner.json
 )
 
 for %%F in (model_registry.json) do (
-  if not exist "%TEMPLATE_ROOT%\AgentRunner\%%F" (
-    echo Missing required source file: "%TEMPLATE_ROOT%\AgentRunner\%%F"
+  if not exist "%TALKER_ROOT%\AgentRunner\%%F" (
+    echo Missing required source file: "%TALKER_ROOT%\AgentRunner\%%F"
     exit /b 6
   )
   if not exist "%DEST_ROOT%\AgentRunner\%%F" (
-    copy /Y "%TEMPLATE_ROOT%\AgentRunner\%%F" "%DEST_ROOT%\AgentRunner\%%F" >nul || (
-      echo Failed to copy file: "%TEMPLATE_ROOT%\AgentRunner\%%F"
+    copy /Y "%TALKER_ROOT%\AgentRunner\%%F" "%DEST_ROOT%\AgentRunner\%%F" >nul || (
+      echo Failed to copy file: "%TALKER_ROOT%\AgentRunner\%%F"
       exit /b 7
     )
   )

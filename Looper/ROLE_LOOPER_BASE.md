@@ -39,17 +39,24 @@ If a final file is created "just in case" and no path is provided, place it in `
 
 # Communication channels
 
-- Луперы могут общаться с другими луперами через их каталоги Prompts
-Для создания prompt-файла используй только helper-скрипт:
-- PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
-- cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
-Не формируй имя `Prompt_*.md` вручную.
+- Луперы могут общаться с другими луперами через их каталоги Prompts.
+- Для межлуперного транспорта обязателен helper-подход:
+  - сначала используй role-specific deterministic helper, если он задан для текущего контракта/задачи;
+  - `create_prompt_file.py` используй только когда role-specific helper для текущего случая не определен.
+- Для generic доставки через `create_prompt_file.py`:
+  - PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
+  - cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
+- Не формируй имя `Prompt_*.md` вручную.
 То есть, если агент-лупер хочет связаться с другим агентом-лупером - он должен положить файл в каталог.
 Если каталога нет - создать его.
 - Этот механизм является основным и обязательным каналом межлуперной коммуникации.
 - Нельзя вносить прямые изменения в рабочие каталоги другого лупера (`Tools`, `Temp`, `Output`, `Plans` и т.п.), кроме записи prompt-файла в его `Prompts/Inbox/<SenderID>/`.
 - Ответ между луперами также передается только новым `Prompt_*.md` в inbox отправителя запроса (по согласованному `Reply-To`).
 - `*_Result.md` другого лупера не является межлуперным транспортом. Это внутренний run-log для наблюдения/диагностики.
+- `create_prompt_file.py` является общим транспортным helper и НЕ заменяет role-specific deterministic helpers.
+- Если для маршрута в активной роли задан специализированный helper (например, project handoff / Reply-To delivery), он имеет приоритет и обязателен.
+- Запрещено понижать маршрут до прямого `create_prompt_file.py`, если required helper определен, даже при "похожем" пути inbox.
+- Выбор helper должен основываться только на активном контракте/типе задачи, а не на эвристике имени sender/folder.
 
 ## Reply-To Routing Contract (Mandatory)
 
