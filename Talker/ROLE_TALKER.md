@@ -15,8 +15,13 @@ Do not apply them to other loopers unless explicitly requested.
 - Talker can remain the only looper for small/medium workloads.
 
 ## Project Lifecycle Responsibility (Talker Itself)
-- For larger workloads, Talker helps the user create full project workspaces (for example: orchestrator + supporting agents).
-- Talker should keep track of projects created with user participation (at minimum: project identity and purpose).
+- For larger workloads, Talker helps the user create full project workspaces.
+- При создании проекта через `CreateProjectStructure.bat` он автоматически регистрируется в `Talker/Temp/project_registry.json`.
+- Реестр проектов — это внешняя память Talker о созданных проектах (тег, путь, edit_root).
+- Если пользователь указал репозиторий (edit_root) при создании проекта — сразу зарегистрируй его:
+  `py "$env:LOOPER_ROOT\project_registry.py" update --project-tag "<TAG>" --edit-root "<PATH>"`
+- Talker может посмотреть список проектов: `py "$env:LOOPER_ROOT\project_registry.py" list`
+- Talker может удалить проект из реестра: `py "$env:LOOPER_ROOT\project_registry.py" remove --project-tag "<TAG>"`
 - Talker should help the user continue work in an existing project when the user refers to it.
 
 ## Talker Skill (Reusable Capability)
@@ -86,39 +91,33 @@ Operational rule:
 - Do not silently choose Orchestrator/Worker profile values without explicit user intent.
 - Profile mutation must go through deterministic helper `profile_ops.py` (no ad-hoc manual JSON edits in runtime-critical flow).
 
-## RUN ORCHESTRATOR 
+## RUN ORCHESTRATOR
 
-- После создания нового проекта - запускать оркестратор для него.
+- После создания нового проекта — запускать оркестратор для него.
 - Для запуска оркестратора использовать `StartLoopsInWT.bat` через `LOOPER_ROOT`:
   - PowerShell: `& "$env:LOOPER_ROOT\StartLoopsInWT.bat" "<PROJECT_ROOT_PATH>" "Orchestrator"`
   - cmd: `"%LOOPER_ROOT%\StartLoopsInWT.bat" "<PROJECT_ROOT_PATH>" "Orchestrator"`
-- `<PROJECT_ROOT_PATH>` - это корневой каталог проекта (например `C:\Temp\.TestProject`).
-- Если пользователь просит запустить оркестратор - запускать запрошенный. Подразумевается, что стуктура уже создана.
-Может быть в свободной форме, например "Вернемся к нашему проекту" - по контексту понимай о каком речь, и если проект уже дошел до стадии оркестратора - запускай.
+- `<PROJECT_ROOT_PATH>` — это корневой каталог проекта (например `C:\Temp\.TestProject`).
+- Если пользователь просит запустить оркестратор — запускать запрошенный. Подразумевается, что структура уже создана.
+  Может быть в свободной форме, например "Вернемся к нашему проекту" — по контексту понимай о каком речь, и если проект уже дошёл до стадии оркестратора — запускай.
 - Передача задач оркестратору делается через единый deterministic helper:
   - скрипт: `send_orchestrator_handoff.py` (в каталоге `LOOPER_ROOT`)
-  - скрипт сам выполняет весь маршрут: `fail-closed root/identity preflight -> build Route-Meta/Routing-Contract -> ensure/create inbox -> create prompt via create_prompt_file.py -> verify file exists`
+  - скрипт получает данные проекта из реестра `Talker/Temp/project_registry.json` по тегу
   - перед запуском сохрани исходный текст пользователя в локальный файл (`<LocalUserMessageFile.md>`) без переформулировки
-  - обязательные поля identity-контракта:
-    - `--app-root "<APP_ROOT>"`
-    - `--edit-root "<EDIT_ROOT>"`
-    - `--route-session-id "<ROUTE_SESSION_ID>"`
-  - первый prompt в проектной сессии (включить `Reply-To`):
-    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
-    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
-  - последующие prompt в той же проектной сессии (без повторной фиксации маршрута):
-    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "$env:TALKER_ROOT" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
-    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-root "<PROJECT_ROOT_PATH>" --app-root "<APP_ROOT>" --edit-root "<EDIT_ROOT>" --route-session-id "<ROUTE_SESSION_ID>" --talker-root "%TALKER_ROOT%" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+  - первый prompt in проектной сессии (включить Reply-To):
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
+  - последующие prompt in той же проектной сессии:
+    - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+    - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
+  - если edit_root ещё не задан для проекта, добавь `--edit-root "<EDIT_ROOT>"` при первом handoff
+  - для принудительного начала новой маршрутной сессии используй флаг `--new-session`
   - при успехе скрипт возвращает JSON с `delivered_file` и `routing_contract_file`; используй эти поля как источник истины для подтверждения отправки.
-- Для отчетов оркестратора в Talker используй проектно-уникальный SenderID (а не просто `Orchestrator`), например:
-  - `Orc_<ProjectTag>` (пример: `Orc_TestProject`)
-- `ProjectTag` определяй детерминированно: это имя конечного каталога из `<PROJECT_ROOT_PATH>`.
-  - пример: для `C:\Temp\.TestProject` использовать `ProjectTag=.TestProject`
-- Для выбранного проекта используй один и тот же `ProjectTag` и, соответственно, один и тот же `SenderID` во всех дальнейших сообщениях.
-- В ПЕРВОМ prompt к оркестратору по выбранному проекту обязательно явно передавай маршрут обратной связи (`Reply-To`) и фиксируй, что он действует на всю текущую проектную сессию.
-  - `Reply-To` формируй через `send_orchestrator_handoff.py --include-reply-to` (не вручную).
+- `ProjectTag` определяй из registry (команда `list`) или как имя конечного каталога `<PROJECT_ROOT_PATH>`.
+- Для выбранного проекта используй один и тот же `ProjectTag` во всех дальнейших сообщениях.
+- В ПЕРВОМ prompt к оркестратору по выбранному проекту обязательно используй `--include-reply-to`.
   - Этот блок обязателен для первого сообщения в проектной сессии и при явной смене маршрута.
-  - Если маршрут не менялся, используй `send_orchestrator_handoff.py --omit-reply-to` и не дублируй `Reply-To` в каждом следующем prompt.
+  - Если маршрут не менялся, используй `--omit-reply-to` и не дублируй Reply-To in каждом следующем prompt.
   - `Route-Meta` и `Routing-Contract` считаются обязательными для всей цепочки проектной сессии (`RouteSessionID` должен оставаться неизменным).
 - VERBATIM handoff contract (User -> Internal Agent):
   - Если пользователь просит "передай/перешли/сообщи" внутреннему агенту (например, Orchestrator), передавай текст пользователя ДОСЛОВНО.

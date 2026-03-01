@@ -104,6 +104,11 @@ if not exist "%DEST_ROOT%\.gitignore" (
   )
 )
 
+py "%LOOPER_ROOT%\project_registry.py" register --project-root "%DEST_PROJECT_ROOT%"
+if errorlevel 1 (
+  echo [warning] Failed to register project in Talker registry. Registration can be done manually later.
+)
+
 echo Project structure ensured successfully: "%DEST_PROJECT_ROOT%"
 exit /b 0
 

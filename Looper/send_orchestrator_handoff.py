@@ -26,6 +26,13 @@ from route_contract_utils import (
     ensure_safe_token,
 )
 
+from project_registry import (
+    derive_talker_root,
+    derive_app_root,
+    lookup_project,
+    update_project,
+    generate_session_id,
+)
 
 DEFAULT_SCOPE = (
     "use this Reply-To for all further reports/questions in this project session "
@@ -55,25 +62,9 @@ def _write_json(path: Path, payload: dict[str, str]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
-def _derive_project_tag(project_root: Path) -> str:
-    return project_root.name
-
-
 def _contract_filename(route_session_id: str) -> str:
     session_hash = hashlib.sha256(route_session_id.encode("utf-8")).hexdigest()[:12]
     return f"routing_contract_{session_hash}.json"
-
-
-def _resolve_agents_root(args: argparse.Namespace) -> Path:
-    project_root = ensure_abs_path("project-root", args.project_root)
-    if args.agents_root:
-        agents_root = ensure_abs_path("agents-root", args.agents_root)
-        if agents_root != project_root:
-            raise RuntimeError(
-                f"project-root and agents-root mismatch: project-root={project_root}, agents-root={agents_root}"
-            )
-        return agents_root
-    return project_root
 
 
 def _build_handoff_content(
@@ -176,23 +167,40 @@ def _build_parser() -> argparse.ArgumentParser:
             "(and optional Reply-To), deliver it and verify resulting Prompt_*.md."
         )
     )
-    parser.add_argument("--project-root", required=True, help="Project workspace root path (same as agents root).")
-    parser.add_argument("--agents-root", help="Explicit agents root; must match --project-root when provided.")
-    parser.add_argument("--app-root", required=True, help="Application runtime root (contains Talker folder).")
-    parser.add_argument("--edit-root", required=True, help="Implementation/code repository root for this session.")
-    parser.add_argument("--route-session-id", required=True, help="Route session identity token (opaque, stable).")
-    parser.add_argument(
-        "--talker-root",
-        help="Talker root path. If omitted, uses TALKER_ROOT env var. Must equal <app-root>\\Talker.",
-    )
+    # Mandatory
+    parser.add_argument("--project-tag", required=True, help="Project tag (key in registry).")
     parser.add_argument(
         "--user-message-file",
         required=True,
         help="Path to file containing user text to be forwarded verbatim.",
     )
+
+    # Optional
+    parser.add_argument("--edit-root", help="Set/update edit_root in registry and use it.")
+    parser.add_argument("--new-session", action="store_true", help="Force generate new route_session_id.")
+    reply_mode = parser.add_mutually_exclusive_group()
+    reply_mode.add_argument(
+        "--include-reply-to",
+        action="store_true",
+        help="Include Reply-To block (recommended for first prompt in project session).",
+    )
+    reply_mode.add_argument(
+        "--omit-reply-to",
+        action="store_true",
+        help="Do not include Reply-To block (when route already fixed for the session).",
+    )
     parser.add_argument(
-        "--project-tag",
-        help="Optional project tag; default is terminal folder name of project root.",
+        "--suffix",
+        help="Optional create_prompt_file.py marker suffix (alnum only).",
+    )
+    parser.add_argument(
+        "--scope",
+        default=DEFAULT_SCOPE,
+        help="Reply-To scope text used only when Reply-To block is included.",
+    )
+    parser.add_argument(
+        "--created-at-utc",
+        help="Optional contract timestamp; default current UTC ISO-8601.",
     )
     parser.add_argument(
         "--sender-id",
@@ -206,30 +214,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--routing-contract-file",
         help="Optional output path for persisted Routing-Contract JSON.",
     )
-    parser.add_argument(
-        "--created-at-utc",
-        help="Optional contract timestamp; default current UTC ISO-8601.",
-    )
-    parser.add_argument(
-        "--suffix",
-        help="Optional create_prompt_file.py marker suffix (alnum only).",
-    )
-    parser.add_argument(
-        "--scope",
-        default=DEFAULT_SCOPE,
-        help="Reply-To scope text used only when Reply-To block is included.",
-    )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--include-reply-to",
-        action="store_true",
-        help="Include Reply-To block (recommended for first prompt in project session).",
-    )
-    mode.add_argument(
-        "--omit-reply-to",
-        action="store_true",
-        help="Do not include Reply-To block (when route already fixed for the session).",
-    )
     return parser
 
 
@@ -238,21 +222,43 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        agents_root = _resolve_agents_root(args)
-        if not agents_root.exists():
-            raise FileNotFoundError(f"agents root not found: {agents_root}")
+        talker_root = derive_talker_root()
+        app_root = derive_app_root()
+        
+        project = lookup_project(talker_root, args.project_tag)
+        
+        project_root = ensure_abs_path("project-root", project["project_root"])
+        if not project_root.exists():
+            raise FileNotFoundError(f"project root found in registry does not exist: {project_root}")
+        
+        agents_root = project_root
+        
+        if args.edit_root:
+            edit_root_path = ensure_abs_path("edit-root", args.edit_root)
+            edit_root = str(edit_root_path)
+            update_project(talker_root, args.project_tag, edit_root=edit_root)
+        else:
+            edit_root = project.get("edit_root", "")
+            
+        if not edit_root:
+            raise RuntimeError(
+                f"edit_root not set for project {args.project_tag!r}. "
+                "Pass --edit-root or register it via: "
+                f"py project_registry.py update --project-tag {args.project_tag!r} --edit-root <path>"
+            )
+        edit_root_path = ensure_abs_path("edit-root", edit_root)
 
-        app_root = ensure_abs_path("app-root", args.app_root)
-        if not app_root.exists():
-            raise FileNotFoundError(f"app root not found: {app_root}")
-
-        edit_root = ensure_abs_path("edit-root", args.edit_root)
-
-
-        talker_root_arg = args.talker_root or os.environ.get("TALKER_ROOT", "")
-        if not talker_root_arg.strip():
-            raise RuntimeError("talker root is required: pass --talker-root or set TALKER_ROOT env var")
-        talker_root = ensure_abs_path("talker-root", talker_root_arg)
+        if args.new_session:
+            route_session_id = generate_session_id(args.project_tag)
+            update_project(talker_root, args.project_tag, route_session_id=route_session_id)
+        else:
+            route_session_id = project.get("route_session_id", "")
+            if not route_session_id:
+                route_session_id = generate_session_id(args.project_tag)
+                update_project(talker_root, args.project_tag, route_session_id=route_session_id)
+        
+        ensure_safe_token("route-session-id", route_session_id)
+        
         expected_talker_root = (app_root / "Talker").resolve()
         if talker_root != expected_talker_root:
             raise RuntimeError(
@@ -271,13 +277,10 @@ def main() -> int:
             raise FileNotFoundError(f"user message file not found: {user_message_file}")
         user_message = _read_text_file(user_message_file)
 
-        project_tag = (args.project_tag or _derive_project_tag(agents_root)).strip()
-        if not project_tag:
-            raise RuntimeError("derived/explicit project tag is empty")
+        project_tag = args.project_tag
         sender_id = (args.sender_id or f"Orc_{project_tag}").strip()
         if not sender_id:
             raise RuntimeError("sender id is empty")
-        route_session_id = ensure_safe_token("route-session-id", args.route_session_id)
 
         created_at_utc = (args.created_at_utc or datetime.now(timezone.utc).isoformat()).strip()
         if not created_at_utc:
@@ -288,6 +291,7 @@ def main() -> int:
         orchestrator_inbox = (agents_root / "Orchestrator" / "Prompts" / "Inbox" / "Talker").resolve()
         ensure_path_in_root(orchestrator_inbox, agents_root, "orchestrator inbox")
         ensure_path_in_root(reply_to_inbox, talker_root, "reply-to inbox")
+        
         orchestrator_inbox.mkdir(parents=True, exist_ok=True)
         if include_reply_to:
             reply_to_inbox.mkdir(parents=True, exist_ok=True)
@@ -297,7 +301,7 @@ def main() -> int:
             "RouteSessionID": route_session_id,
             "AppRoot": str(app_root),
             "AgentsRoot": str(agents_root),
-            "EditRoot": str(edit_root),
+            "EditRoot": str(edit_root_path),
             "ProjectTag": project_tag,
             "OrchestratorSenderID": sender_id,
             "CreatedAtUTC": created_at_utc,
@@ -349,7 +353,7 @@ def main() -> int:
             "project_root": str(agents_root),
             "app_root": str(app_root),
             "talker_root": str(talker_root),
-            "edit_root": str(edit_root),
+            "edit_root": str(edit_root_path),
             "orchestrator_inbox": str(orchestrator_inbox),
             "local_handoff_file": str(local_handoff_file),
             "routing_contract_file": str(routing_contract_file),
