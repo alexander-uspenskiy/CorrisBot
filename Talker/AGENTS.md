@@ -424,7 +424,7 @@ Operational rule:
   - последующие prompt in той же проектной сессии:
     - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
     - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
-  - если edit_root ещё не задан для проекта, добавь `--edit-root "<EDIT_ROOT>"` при первом handoff
+  - для handoff достаточно зарегистрированного `project_root`; `edit_root` не участвует в Routing-Contract
   - для принудительного начала новой маршрутной сессии используй флаг `--new-session`
   - при успехе скрипт возвращает JSON с `delivered_file` и `routing_contract_file`; используй эти поля как источник истины для подтверждения отправки.
 - `ProjectTag` определяй из registry (команда `list`) или как имя конечного каталога `<PROJECT_ROOT_PATH>`.

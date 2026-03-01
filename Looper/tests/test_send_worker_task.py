@@ -30,7 +30,6 @@ class SendWorkerTaskTests(unittest.TestCase):
         path: Path,
         app_root: Path,
         agents_root: Path,
-        edit_root: Path,
         sender_id: str = "Orc_ProjectA",
     ) -> None:
         payload = {
@@ -38,7 +37,6 @@ class SendWorkerTaskTests(unittest.TestCase):
             "RouteSessionID": "RS_TEST",
             "AppRoot": str(app_root.resolve()),
             "AgentsRoot": str(agents_root.resolve()),
-            "EditRoot": str(edit_root.resolve()),
             "ProjectTag": "ProjectA",
             "OrchestratorSenderID": sender_id,
             "CreatedAtUTC": "2026-02-20T12:00:00Z",
@@ -50,12 +48,10 @@ class SendWorkerTaskTests(unittest.TestCase):
             temp_root = Path(temp_dir)
             app_root = temp_root / "_RUN_CorrisBot"
             agents_root = temp_root / "ProjectA"
-            edit_root = temp_root / "EditRepo"
             self._init_project(agents_root)
             app_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             contract_file = temp_root / "routing_contract.json"
-            self._write_contract(contract_file, app_root, agents_root, edit_root)
+            self._write_contract(contract_file, app_root, agents_root)
             task_file = temp_root / "task.md"
             task_file.write_text("Implement phase 1 changes", encoding="utf-8")
 
@@ -105,12 +101,10 @@ class SendWorkerTaskTests(unittest.TestCase):
             temp_root = Path(temp_dir)
             app_root = temp_root / "_RUN_CorrisBot"
             agents_root = temp_root / "ProjectA"
-            edit_root = temp_root / "EditRepo"
             self._init_project(agents_root)
             app_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             contract_file = temp_root / "routing_contract.json"
-            self._write_contract(contract_file, app_root, agents_root, edit_root)
+            self._write_contract(contract_file, app_root, agents_root)
 
             code, _, stderr = self._run_script(
                 [
@@ -130,16 +124,13 @@ class SendWorkerTaskTests(unittest.TestCase):
             temp_root = Path(temp_dir)
             app_root = temp_root / "_RUN_CorrisBot"
             agents_root = temp_root / "ProjectA"
-            edit_root = temp_root / "EditRepo"
             self._init_project(agents_root)
             app_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             contract_file = temp_root / "routing_contract.json"
             self._write_contract(
                 contract_file,
                 app_root,
                 agents_root,
-                edit_root,
                 sender_id="Orc ProjectA v1",
             )
 

@@ -51,7 +51,6 @@ def _load_routing_contract_file(path: Path) -> dict[str, str]:
         "RouteSessionID",
         "AppRoot",
         "AgentsRoot",
-        "EditRoot",
         "ProjectTag",
         "OrchestratorSenderID",
         "CreatedAtUTC",
@@ -247,7 +246,6 @@ def main() -> int:
                 "RouteSessionID",
                 "AppRoot",
                 "AgentsRoot",
-                "EditRoot",
                 "ProjectTag",
                 "OrchestratorSenderID",
             ]:

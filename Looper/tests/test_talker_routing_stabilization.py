@@ -420,7 +420,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             "- CreatedAtUTC: 2026-02-21T00:00:00Z\n"
             "- AppRoot: C:\\app\n"
             "- AgentsRoot: C:\\agents\n"
-            "- EditRoot: C:\\edit\n"
             "\n"
             "Route-Meta:\n"
             "- ProjectTag: ProjA\n"
@@ -438,7 +437,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
         self.assertIn("- RouteSessionID: sess123", prompt)
         self.assertIn("- ProjectTag: ProjA", prompt)
         self.assertIn("- AgentsRoot: C:\\agents", prompt)
-        self.assertIn("- EditRoot: C:\\edit", prompt)
 
     def test_unit_build_loop_prompt_worker_no_paths(self) -> None:
         user_text = (
@@ -451,7 +449,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             "- CreatedAtUTC: 2026-02-21T00:00:00Z\n"
             "- AppRoot: C:\\app\n"
             "- AgentsRoot: C:\\agents\n"
-            "- EditRoot: C:\\edit\n"
             "\n"
             "Route-Meta:\n"
             "- ProjectTag: ProjA\n"
@@ -465,7 +462,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
         )
         self.assertNotIn("Routing-Contract:", prompt)
         self.assertNotIn("AgentsRoot: C:\\agents", prompt)
-        self.assertNotIn("EditRoot: C:\\edit", prompt)
         self.assertIn("- RouteSessionID: sess123", prompt)
 
     def test_unit_build_loop_prompt_talker_no_paths(self) -> None:
@@ -479,7 +475,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
             "- CreatedAtUTC: 2026-02-21T00:00:00Z\n"
             "- AppRoot: C:\\app\n"
             "- AgentsRoot: C:\\agents\n"
-            "- EditRoot: C:\\edit\n"
             "\n"
             "Route-Meta:\n"
             "- ProjectTag: ProjA\n"
@@ -493,7 +488,6 @@ class TalkerRoutingStabilizationTests(unittest.TestCase):
         )
         self.assertNotIn("Routing-Contract:", prompt)
         self.assertNotIn("AgentsRoot: C:\\agents", prompt)
-        self.assertNotIn("EditRoot: C:\\edit", prompt)
         self.assertIn("- RouteSessionID: sess123", prompt)
 
 

@@ -88,7 +88,6 @@ def _build_handoff_content(
         f"- RouteSessionID: {routing_contract['RouteSessionID']}",
         f"- AppRoot: {routing_contract['AppRoot']}",
         f"- AgentsRoot: {routing_contract['AgentsRoot']}",
-        f"- EditRoot: {routing_contract['EditRoot']}",
         f"- ProjectTag: {routing_contract['ProjectTag']}",
         f"- OrchestratorSenderID: {routing_contract['OrchestratorSenderID']}",
         f"- CreatedAtUTC: {routing_contract['CreatedAtUTC']}",
@@ -176,7 +175,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # Optional
-    parser.add_argument("--edit-root", help="Set/update edit_root in registry and use it.")
     parser.add_argument("--new-session", action="store_true", help="Force generate new route_session_id.")
     reply_mode = parser.add_mutually_exclusive_group()
     reply_mode.add_argument(
@@ -233,21 +231,6 @@ def main() -> int:
         
         agents_root = project_root
         
-        if args.edit_root:
-            edit_root_path = ensure_abs_path("edit-root", args.edit_root)
-            edit_root = str(edit_root_path)
-            update_project(talker_root, args.project_tag, edit_root=edit_root)
-        else:
-            edit_root = project.get("edit_root", "")
-            
-        if not edit_root:
-            raise RuntimeError(
-                f"edit_root not set for project {args.project_tag!r}. "
-                "Pass --edit-root or register it via: "
-                f"py project_registry.py update --project-tag {args.project_tag!r} --edit-root <path>"
-            )
-        edit_root_path = ensure_abs_path("edit-root", edit_root)
-
         if args.new_session:
             route_session_id = generate_session_id(args.project_tag)
             update_project(talker_root, args.project_tag, route_session_id=route_session_id)
@@ -301,7 +284,6 @@ def main() -> int:
             "RouteSessionID": route_session_id,
             "AppRoot": str(app_root),
             "AgentsRoot": str(agents_root),
-            "EditRoot": str(edit_root_path),
             "ProjectTag": project_tag,
             "OrchestratorSenderID": sender_id,
             "CreatedAtUTC": created_at_utc,
@@ -353,7 +335,6 @@ def main() -> int:
             "project_root": str(agents_root),
             "app_root": str(app_root),
             "talker_root": str(talker_root),
-            "edit_root": str(edit_root_path),
             "orchestrator_inbox": str(orchestrator_inbox),
             "local_handoff_file": str(local_handoff_file),
             "routing_contract_file": str(routing_contract_file),

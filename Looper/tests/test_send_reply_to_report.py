@@ -28,10 +28,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_A"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectA"
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
@@ -47,7 +45,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_A",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectA",
                         "- OrchestratorSenderID: Orc_ProjectA",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -111,10 +108,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_B"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
             prompt_file.write_text(
@@ -129,7 +124,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_B",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectB",
                         "- OrchestratorSenderID: Orc_ProjectB",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -174,10 +168,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_C"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
             prompt_file.write_text(
@@ -188,7 +180,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_C",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectC",
                         "- OrchestratorSenderID: Orc_ProjectC",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -233,10 +224,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_D"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
             prompt_file.write_text(
@@ -251,7 +240,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_D",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectD",
                         "- OrchestratorSenderID: Orc_ProjectD",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -296,10 +284,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_E"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
             prompt_file.write_text(
@@ -314,7 +300,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_E",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectE",
                         "- OrchestratorSenderID: Orc_ProjectE",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -360,10 +345,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_F"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectF"
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
@@ -379,7 +362,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_F",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectF",
                         "- OrchestratorSenderID: Orc_ProjectF",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -423,10 +405,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_G"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectG"
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
@@ -442,7 +422,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_G",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectG",
                         "- OrchestratorSenderID: Orc_ProjectG",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -487,10 +466,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_H"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectH"
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
@@ -508,7 +485,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_H",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectH",
                         "- OrchestratorSenderID: Orc_ProjectH",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -554,10 +530,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_H2"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectH2"
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
@@ -576,7 +550,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_H2",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectH2",
                         "- OrchestratorSenderID: Orc_ProjectH2",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -622,10 +595,8 @@ class SendReplyToReportTests(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_I"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectI"
             prompt_file = temp_root / "incoming.md"
             report_file = temp_root / "report.md"
@@ -643,7 +614,6 @@ class SendReplyToReportTests(unittest.TestCase):
                         f"- RouteSessionID: RS_I",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectI",
                         "- OrchestratorSenderID: Orc_ProjectI",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
@@ -708,3 +678,4 @@ class SendReplyToReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -167,7 +167,6 @@ def _validate_routing_contract_fields(fields: dict[str, str]) -> dict[str, str]:
         "RouteSessionID",
         "AppRoot",
         "AgentsRoot",
-        "EditRoot",
         "ProjectTag",
         "OrchestratorSenderID",
         "CreatedAtUTC",

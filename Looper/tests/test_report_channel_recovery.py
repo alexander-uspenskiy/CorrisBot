@@ -163,10 +163,8 @@ class TestReportChannelRecovery(unittest.TestCase):
             app_root = temp_root / "_RUN_CorrisBot"
             talker_root = app_root / "Talker"
             agents_root = temp_root / "Project_A"
-            edit_root = temp_root / "EditRepo"
             talker_root.mkdir(parents=True, exist_ok=True)
             agents_root.mkdir(parents=True, exist_ok=True)
-            edit_root.mkdir(parents=True, exist_ok=True)
             
             # The audit log path is now explicitly passed via --audit-file
             audit_file = talker_root / "Temp" / "report_delivery_audit.jsonl"
@@ -186,7 +184,6 @@ class TestReportChannelRecovery(unittest.TestCase):
                         f"- RouteSessionID: RS_X",
                         f"- AppRoot: {app_root.resolve()}",
                         f"- AgentsRoot: {agents_root.resolve()}",
-                        f"- EditRoot: {edit_root.resolve()}",
                         "- ProjectTag: ProjectX",
                         "- OrchestratorSenderID: Orc_ProjectX",
                         "- CreatedAtUTC: 2026-02-20T12:00:00Z",
