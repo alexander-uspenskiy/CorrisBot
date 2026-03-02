@@ -588,6 +588,140 @@ class SendReplyToReportTests(unittest.TestCase):
             self.assertIn("report_audit_path_missing_or_invalid", stderr)
             self.assertIn("outside allowed scope", stderr)
 
+    def test_phase_accept_semantic_contract_valid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            app_root = temp_root / "_RUN_CorrisBot"
+            talker_root = app_root / "Talker"
+            agents_root = temp_root / "Project_J"
+            talker_root.mkdir(parents=True, exist_ok=True)
+            agents_root.mkdir(parents=True, exist_ok=True)
+            inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectJ"
+            prompt_file = temp_root / "incoming.md"
+            report_file = temp_root / "report_phase_accept_ok.md"
+
+            prompt_file.write_text(
+                "\n".join(
+                    [
+                        "Route-Meta:",
+                        "- RouteSessionID: RS_J",
+                        "- ProjectTag: ProjectJ",
+                        "",
+                        "Routing-Contract:",
+                        "- Version: 1",
+                        "- RouteSessionID: RS_J",
+                        f"- AppRoot: {app_root.resolve()}",
+                        f"- AgentsRoot: {agents_root.resolve()}",
+                        "- ProjectTag: ProjectJ",
+                        "- OrchestratorSenderID: Orc_ProjectJ",
+                        "- CreatedAtUTC: 2026-02-20T12:00:00Z",
+                        "",
+                        "Reply-To:",
+                        f"- InboxPath: {inbox}",
+                        "- SenderID: Orc_ProjectJ",
+                        "- FilePattern: Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            report_file.write_text(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_accept\n"
+                "- ReportID: rep_phase_accept_ok\n"
+                "- RouteSessionID: RS_J\n"
+                "- ProjectTag: ProjectJ\n\n"
+                "Gate-Decision:\n"
+                "- Verdict: ACCEPT\n"
+                "- Decision: GO\n"
+                "- Mapping: ACCEPT=>GO\n\n"
+                "Acceptance completed.",
+                encoding="utf-8",
+            )
+
+            audit_file = talker_root / "Temp" / "report_delivery_audit.jsonl"
+            code, stdout, stderr = self._run_script(
+                [
+                    "--incoming-prompt",
+                    str(prompt_file),
+                    "--report-file",
+                    str(report_file),
+                    "--audit-file",
+                    str(audit_file),
+                ]
+            )
+
+            self.assertEqual(0, code, msg=stderr)
+            payload = json.loads(stdout.strip())
+            delivered = Path(payload["delivered_file"])
+            self.assertTrue(delivered.exists())
+
+    def test_phase_accept_semantic_contract_mismatch_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            app_root = temp_root / "_RUN_CorrisBot"
+            talker_root = app_root / "Talker"
+            agents_root = temp_root / "Project_K"
+            talker_root.mkdir(parents=True, exist_ok=True)
+            agents_root.mkdir(parents=True, exist_ok=True)
+            inbox = talker_root / "Prompts" / "Inbox" / "Orc_ProjectK"
+            prompt_file = temp_root / "incoming.md"
+            report_file = temp_root / "report_phase_accept_bad.md"
+
+            prompt_file.write_text(
+                "\n".join(
+                    [
+                        "Route-Meta:",
+                        "- RouteSessionID: RS_K",
+                        "- ProjectTag: ProjectK",
+                        "",
+                        "Routing-Contract:",
+                        "- Version: 1",
+                        "- RouteSessionID: RS_K",
+                        f"- AppRoot: {app_root.resolve()}",
+                        f"- AgentsRoot: {agents_root.resolve()}",
+                        "- ProjectTag: ProjectK",
+                        "- OrchestratorSenderID: Orc_ProjectK",
+                        "- CreatedAtUTC: 2026-02-20T12:00:00Z",
+                        "",
+                        "Reply-To:",
+                        f"- InboxPath: {inbox}",
+                        "- SenderID: Orc_ProjectK",
+                        "- FilePattern: Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            report_file.write_text(
+                "Message-Meta:\n"
+                "- MessageClass: report\n"
+                "- ReportType: phase_accept\n"
+                "- ReportID: rep_phase_accept_bad\n"
+                "- RouteSessionID: RS_K\n"
+                "- ProjectTag: ProjectK\n\n"
+                "Gate-Decision:\n"
+                "- Verdict: ACCEPT\n"
+                "- Decision: NO-GO\n"
+                "- Mapping: ACCEPT=>NO-GO\n\n"
+                "Inconsistent acceptance payload.",
+                encoding="utf-8",
+            )
+
+            audit_file = talker_root / "Temp" / "report_delivery_audit.jsonl"
+            code, _, stderr = self._run_script(
+                [
+                    "--incoming-prompt",
+                    str(prompt_file),
+                    "--report-file",
+                    str(report_file),
+                    "--audit-file",
+                    str(audit_file),
+                ]
+            )
+
+            self.assertEqual(2, code)
+            self.assertIn("phase_accept contract mismatch", stderr)
+
     def test_idempotency_skip_with_explicit_audit_file(self) -> None:
         """Idempotency skip should work with explicit --audit-file."""
         with tempfile.TemporaryDirectory() as temp_dir:

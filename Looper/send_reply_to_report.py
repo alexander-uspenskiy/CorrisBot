@@ -21,6 +21,7 @@ from route_contract_utils import (
     extract_route_meta_fields,
     try_extract_routing_contract_fields,
     extract_message_meta_fields,
+    validate_semantic_report_contract,
     _is_relative_to,
 )
 
@@ -278,6 +279,7 @@ def main() -> int:
 
         report_text = _read_text_file(report_file)
         msg_meta = extract_message_meta_fields(report_text)
+        validate_semantic_report_contract(report_text, msg_meta)
         
         if msg_meta["RouteSessionID"] != contract["RouteSessionID"]:
              raise RuntimeError(f"Message-Meta.RouteSessionID does not match contract: {msg_meta['RouteSessionID']} vs {contract['RouteSessionID']}")

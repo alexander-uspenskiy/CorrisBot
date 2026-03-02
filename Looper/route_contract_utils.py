@@ -137,6 +137,114 @@ def extract_message_meta_fields(prompt_text: str) -> dict[str, str]:
     return {key: fields[key].strip() for key in required}
 
 
+def _extract_top_level_field_values(prompt_text: str, field_name: str) -> list[str]:
+    """Collect top-level `Field: value` or `- Field: value` entries.
+
+    Ignores code fences and quoted markdown to avoid matching examples.
+    """
+    values: list[str] = []
+    in_code_fence = False
+    field_lower = field_name.lower()
+
+    for raw_line in prompt_text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("```"):
+            in_code_fence = not in_code_fence
+            continue
+        if in_code_fence or line.startswith(">"):
+            continue
+
+        if line.startswith("-"):
+            payload = line[1:].strip()
+        else:
+            payload = line
+
+        if ":" not in payload:
+            continue
+
+        key, value = payload.split(":", 1)
+        if key.strip().lower() != field_lower:
+            continue
+
+        normalized_value = value.strip()
+        if normalized_value:
+            values.append(normalized_value)
+    return values
+
+
+def _extract_single_top_level_field(prompt_text: str, field_name: str) -> str | None:
+    values = _extract_top_level_field_values(prompt_text, field_name)
+    if not values:
+        return None
+
+    unique_normalized = {item.strip().upper() for item in values}
+    if len(unique_normalized) > 1:
+        raise RuntimeError(
+            f"phase_accept contract has conflicting {field_name} values: {', '.join(values)}"
+        )
+    return values[0].strip()
+
+
+def validate_phase_accept_contract(report_text: str) -> dict[str, str]:
+    """Validate semantic gate contract for phase_accept reports.
+
+    Contract:
+    - Verdict: ACCEPT | REWORK
+    - Decision: GO | NO-GO
+    - Canonical mapping:
+      ACCEPT => GO
+      REWORK => NO-GO
+    - Mapping (optional): if present, must match canonical pair.
+    """
+    verdict_raw = _extract_single_top_level_field(report_text, "Verdict")
+    decision_raw = _extract_single_top_level_field(report_text, "Decision")
+    mapping_raw = _extract_single_top_level_field(report_text, "Mapping")
+
+    if not verdict_raw or not decision_raw:
+        raise RuntimeError(
+            "phase_accept contract missing required fields: Verdict and Decision are mandatory"
+        )
+
+    verdict = verdict_raw.upper()
+    decision = decision_raw.upper()
+    if verdict not in ("ACCEPT", "REWORK"):
+        raise RuntimeError(f"phase_accept contract invalid Verdict: {verdict_raw}")
+    if decision not in ("GO", "NO-GO"):
+        raise RuntimeError(f"phase_accept contract invalid Decision: {decision_raw}")
+
+    expected_decision = "GO" if verdict == "ACCEPT" else "NO-GO"
+    if decision != expected_decision:
+        raise RuntimeError(
+            "phase_accept contract mismatch: "
+            f"Verdict={verdict} requires Decision={expected_decision}, got {decision}"
+        )
+
+    if mapping_raw is not None:
+        mapping = mapping_raw.upper().replace(" ", "")
+        expected_mapping = f"{verdict}=>{expected_decision}"
+        if mapping != expected_mapping:
+            raise RuntimeError(
+                "phase_accept contract mapping mismatch: "
+                f"expected {expected_mapping}, got {mapping_raw}"
+            )
+
+    return {
+        "Verdict": verdict,
+        "Decision": decision,
+        "Mapping": (mapping_raw or "").strip(),
+    }
+
+
+def validate_semantic_report_contract(report_text: str, msg_meta: dict[str, str]) -> None:
+    """Apply report-type-specific semantic checks."""
+    if msg_meta.get("MessageClass") != "report":
+        return
+
+    report_type = msg_meta.get("ReportType", "")
+    if report_type == "phase_accept":
+        validate_phase_accept_contract(report_text)
+
+
 def extract_route_meta_fields(prompt_text: str) -> dict[str, str]:
     fields = _scan_markdown_block(prompt_text, "Route-Meta:")
     session_id = fields.get("RouteSessionID", "").strip()

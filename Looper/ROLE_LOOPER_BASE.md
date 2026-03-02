@@ -110,6 +110,11 @@ If a final file is created "just in case" and no path is provided, place it in `
   3. Phase done gate (`PASS`/`FAIL`).
   4. Final execution summary.
   5. Blocking question to user (`ReportType=question`).
+- Для `ReportType=phase_accept` действует обязательный семантический gate-контракт:
+  - `Verdict: ACCEPT | REWORK`
+  - `Decision: GO | NO-GO`
+  - каноническая маппинг-пара: `ACCEPT=>GO`, `REWORK=>NO-GO`
+  - несоответствие/пропуск трактуется fail-closed и блокирует доставку отчета.
 - Fail-closed gate: если отправка `report` не подтверждена хелпером (нет `status=ok` и `delivered_file`), текущий turn не считается завершенным. Необходимо остановить процесс и зафиксировать `report_delivery_failed`. Никаких "console-only" отчетов.
 - Сообщения без валидного `Message-Meta` считаются невалидными для отправки.
 - `ReportID` должен быть уникальным для события и стабильным при ретраях для защиты от отправки дубликатов.
