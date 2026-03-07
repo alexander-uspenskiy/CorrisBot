@@ -70,7 +70,6 @@ Required software:
 - `pip`
 - Git
 - Windows Terminal
-- Python package `python-telegram-bot`
 - At least one supported agent CLI:
   - Codex CLI
   - Kimi Code CLI
@@ -82,6 +81,32 @@ Notes:
 
 - The platform can run entirely on Codex or entirely on Kimi.
 - Installing both CLIs is optional.
+
+Python dependencies are installed from:
+
+- `requirements.txt`
+
+## Quick Start
+
+1. Clone the repository.
+2. Open `cmd` or PowerShell in the repository root.
+3. Install Python dependencies:
+
+```bat
+py -3 -m pip install -r requirements.txt
+```
+
+4. Set the required environment variables:
+   - `TELEGRAM_BOT_TOKEN`
+   - `ALLOWED_CHAT_ID`
+5. Make sure at least one supported agent CLI is installed and authenticated:
+   - Codex CLI
+   - Kimi Code CLI
+6. Start the platform:
+
+```bat
+CorrisBot.bat
+```
 
 ## Setup
 
