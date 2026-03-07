@@ -1,63 +1,63 @@
 # CorrisBot
 
-**CorrisBot** - это portable асинхронная мультиагентная платформа оркестрации на основе LLM-агентов-луперов.
+**CorrisBot** is a portable asynchronous multi-agent orchestration platform based on looping LLM agents.
 
-С ее помощью можно делать более сложные проекты, чем через обычные агентные системы типа Codex или Claude Code.
+It allows you to build more complex projects than with conventional agent systems such as Codex or Claude Code.
 
-Платформа позволяет отчасти решить проблему:
+The platform helps partially address:
 
-- автоматизации оркестрации;
-- длины контекстного окна;
-- цены токенов.
+- orchestration automation;
+- context window length limits;
+- token costs.
 
-Делегируя задачи другим агентам, оркестратор экономит контекст, а сами задачи могут выполняться параллельно. Это позволяет решать задачи в несколько раз сложнее, чем допускает длина контекстного окна одного агента.
+By delegating tasks to other agents, the orchestrator saves context, while tasks themselves can run in parallel. This makes it possible to solve problems several times more complex than what a single agent's context window allows.
 
-С оркестратором можно общаться асинхронно: ваш запрос будет обработан между его взаимодействиями с другими агентами. То есть доработка на лету - это рабочий вариант.
+You can communicate with the orchestrator asynchronously: your request will be processed in between its interactions with other agents. In other words, iterative refinement on the fly is a viable workflow.
 
-## Типы агентов
+## Agent Types
 
-В платформе есть три типа специализированных агентов, отличающихся скилами:
+The platform includes three types of specialized agents with different skill sets:
 
-- `Talker` - для связи с пользователем;
-- `Orchestrator` - для оркестрации платформы;
-- `Worker` - любые другие агенты.
+- `Talker` — for communication with the user;
+- `Orchestrator` — for platform orchestration;
+- `Worker` — any other agents.
 
-### Рекомендуемые специализации `Worker` (optional)
+### Recommended `Worker` specializations (optional)
 
-- `Seeker` - Low/Med reasoning;
-- `Planner` - High reasoning;
-- `Worker` - Med/High reasoning;
-- `CodeReviewer` - High reasoning;
-- `QA` - High reasoning;
-- `Heartbeat/AlarmClock` - Low reasoning.
+- `Seeker` — Low/Med reasoning;
+- `Planner` — High reasoning;
+- `Worker` — Med/High reasoning;
+- `CodeReviewer` — High reasoning;
+- `QA` — High reasoning;
+- `Heartbeat/AlarmClock` — Low reasoning.
 
-Специализации для `Worker` задаются оркестратором по вашим требованиям.
+`Worker` specializations are assigned by the orchestrator based on your requirements.
 
-Оркестратор сам решает, сколько и каких агентов ему нужно для выполнения задачи. Но вы можете дать ему указания напрямую.
+The orchestrator decides on its own how many agents are needed and what kinds they should be to complete a task. However, you can also provide direct instructions.
 
-## Конфигурация
+## Configuration
 
-Конфигурацию агента `Talker` можно поменять в:
+You can change the `Talker` agent configuration in:
 
 - `Talker\agent_runner.json`
 
-Поддерживаемые раннеры:
+Supported runners:
 
 - `Codex`
 - `Kimi`
 
-Конкретика модели настраивается в файлах:
+Model-specific settings are configured in:
 
 - `Talker\codex_profile.json`
 - `Talker\kimi_profile.json`
 
-Конфигурацию остальных агентов настраивает оркестратор. Вы можете прямо сказать, что именно хотите, либо он будет принимать решение самостоятельно.
+The orchestrator configures all other agents. You can explicitly tell it what you want, or let it decide autonomously.
 
-## Ограничения текущей версии
+## Current Version Limitations
 
-Платформа пока на ранней стадии разработки и может работать только с подписками ChatGPT и Kimi Code.
+The platform is still in an early development stage and currently works only with ChatGPT and Kimi Code subscriptions.
 
-Платформа пока не работает с API-токенами.
+The platform does not yet support API tokens.
 
 ## Prerequisites
 
@@ -83,88 +83,88 @@ Notes:
 - The platform can run entirely on Codex or entirely on Kimi.
 - Installing both CLIs is optional.
 
-## Настройка
+## Setup
 
-Выдача задания оркестратору происходит через Telegram-бота.
+Task handoff to the orchestrator happens through a Telegram bot.
 
-Для инсталляции добавьте в environment variables:
+For installation, add the following environment variables:
 
 - `TELEGRAM_BOT_TOKEN`
 - `ALLOWED_CHAT_ID`
 
-Доступные LLM-модели перечислены в файле:
+Available LLM models are listed in:
 
 - `Talker\AgentRunner\model_registry.json`
 
-При появлении новых моделей добавляйте их туда.
+When new models appear, add them there.
 
-## Запуск
+## Launch
 
-Для запуска используйте:
+To launch, use:
 
 ```bat
 CorrisBot.bat
 ```
 
-На связи с пользователем будет агент-лупер `Talker`.
+The looping agent `Talker` will handle communication with the user.
 
-Он выступает в роли обычного chatbot, который умеет создавать новые проекты.
+It acts as a standard chatbot that can create new projects.
 
-## Команды Telegram-бота
-
-```text
-/help                  - показ команд чат-бота
-/id                    - узнать номер чата (`ALLOWED_CHAT_ID`), необходимый для работы платформы
-/reset                 - сброс текущих сессий LLM-моделей
-/agent                 - показ текущего агента <tg_userid>
-/routing show          - показать текущие настройки
-/routing set-user <tg_userid> - настроить передачу информации
-```
-
-## Пример работы
-
-Команда на создание проекта и запуск оркестратора дается в свободной форме, например:
+## Telegram Bot Commands
 
 ```text
-Сделай новый проект.
-В каталоге c:\Temp\CorrisBot_TestProject_13
-Оркестратор должен быть Codex reasoning High
+/help                  - show chatbot commands
+/id                    - get chat ID (`ALLOWED_CHAT_ID`), required for platform operation
+/reset                 - reset current LLM model sessions
+/agent                 - show current agent <tg_userid>
+/routing show          - show current routing settings
+/routing set-user <tg_userid> - configure information forwarding
 ```
 
-После этого `Talker` может задать некоторые уточняющие вопросы, создать проект и запустить оркестратор.
+## Usage Example
 
-Имеет смысл заранее договориться с `Talker`, чтобы он дословно передавал данные оркестратору. Это можно сформулировать в свободной форме, например:
+A command to create a project and start the orchestrator can be given in free form, for example:
 
 ```text
-Когда я буду просить передать что-либо оркестратору, передавай данные дословно.
-Для краткости могу писать `Orc: <do something>`.
+Create a new project.
+In directory c:\Temp\CorrisBot_TestProject_13
+Orchestrator should be Codex reasoning High
 ```
 
-### Пример озадачивания оркестратора
+After that, `Talker` may ask clarifying questions, create the project, and launch the orchestrator.
+
+It's useful to agree in advance with `Talker` that it should pass data to the orchestrator verbatim. You can phrase it freely, for example:
+
+```text
+When I ask you to pass something to the orchestrator, forward the data verbatim.
+For brevity, I may write `Orc: <do something>`.
+```
+
+### Example of assigning a task to the orchestrator
 
 ```text
 Orc:
 
-Твоя задача оркестровать тестовый проект.
-В каталоге c:\Temp\TestProject создать py скрипт, вычисляющий значения параболы в диапазоне X от -1 до 1.
-Скрипт должен складывать результат в .md файл, рядом с самим скриптом.
-Кроме того, ты должен создать AlarmClock Worker моделью Codex reasoning Low, чья задача будет один раз в три минуты пинать тебя.
-То есть, этот AlarmClock должен через виндовый шедуллер послать тебе задание.
-И после того как ты отчитаешься мне, что получил напоминание - я попрошу тебя остановить эти часы.
-Это тоже часть теста. Что работает такой heartbeat и что мы можем его останавливать.
-Пример скриптов регистрации и запуска лежит в двух скриптах:
+Your task is to orchestrate a test project.
+In directory c:\Temp\TestProject create a Python script that computes parabola values for X in the range from -1 to 1.
+The script must write the result to an .md file next to the script itself.
+In addition, you must create an AlarmClock Worker with Codex reasoning Low, whose task is to ping you once every three minutes.
+That is, this AlarmClock should send you a task through Windows Task Scheduler.
+After you report to me that you received the reminder, I will ask you to stop this clock.
+This is also part of the test: to verify that this heartbeat works and that we can stop it.
+Example scripts for registration and launch are in these two files:
 <Corrisbot>\AlarmClock\Tools\register_alarmclock_task.ps1
 <Corrisbot>\AlarmClock\Tools\alarmclock_tick.ps1
 ```
 
-## Известные проблемы платформы
+## Known Platform Issues
 
-- Автоматическое сжатие контекста приводит к "нарколепсии" оркестратора. Поэтому особенно большие проекты пока ей недоступны.
-  Временное лечение: просить оркестратора периодически следить за своим контекстом, и когда приблизится момент автоматического сжатия, сделать handoff в `.md`-файл с обязательным чтением этого файла сразу после сжатия контекста.
-  `TBD`: возможность перезапуска оркестратора с предварительным handoff и последующим восстановлением контекста.
-- Оркестратор может в какой-то момент "забыть" о следующем шаге. Такое бывает после сжатия его контекста.
-  Решение: создать `Heartbeat`-агента, который будет пинать оркестратор раз в час, чтобы напоминать ему о конечной цели проекта. Вы можете попросить оркестратора создать такого агента.
-- Агент `Talker` тоже может страдать "нарколепсией". Обычно это лечится перезапуском сессии `Talker` (стандартного способа пока нет). После этого ему снова придется напомнить, где лежит оркестратор.
-- При routing сообщений оркестратора через `Talker` тот очень любит пересказывать сообщения вместо прямой ретрансляции. Лечится настойчивыми просьбами передавать текст один в один.
-- Нет штатного перезапуска системы. Запустили проект - он работает до закрытия терминалов.
-- Оркестратор любит многократно использовать одних и тех же агентов, невзирая на заканчивающийся контекст. Это лечится указанием принудительно менять агентов после выполнения `N` тасков.
+- Automatic context compression can lead to orchestrator "narcolepsy." As a result, especially large projects are not yet feasible.
+  Temporary workaround: ask the orchestrator to periodically monitor its context, and when automatic compression approaches, make a handoff to an `.md` file and require reading that file immediately after compression.
+  `TBD`: ability to restart the orchestrator with a preliminary handoff and subsequent context restoration.
+- At some point, the orchestrator may "forget" the next step. This can happen after context compression.
+  Workaround: create a `Heartbeat` agent that pings the orchestrator once per hour to remind it of the project's final goal. You can ask the orchestrator to create such an agent.
+- The `Talker` agent can also suffer from "narcolepsy." This is usually fixed by restarting the `Talker` session (there is no standard way yet). After that, you will need to remind it again where the orchestrator is located.
+- When routing orchestrator messages through `Talker`, it tends to paraphrase messages instead of relaying them directly. This can be mitigated by persistently asking it to forward text verbatim.
+- There is no built-in system restart. Once launched, a project keeps running until terminals are closed.
+- The orchestrator tends to repeatedly reuse the same agents, despite approaching context limits. This can be mitigated by instructing it to force agent rotation after `N` tasks.
