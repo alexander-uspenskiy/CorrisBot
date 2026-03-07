@@ -39,63 +39,63 @@ If a final file is created "just in case" and no path is provided, place it in `
 
 # Communication channels
 
-- Луперы могут общаться с другими луперами через их каталоги Prompts.
-- Для межлуперного транспорта обязателен helper-подход:
-  - сначала используй role-specific deterministic helper, если он задан для текущего контракта/задачи;
-  - `create_prompt_file.py` используй только когда role-specific helper для текущего случая не определен.
-- Для generic доставки через `create_prompt_file.py`:
+- Loopers may communicate with other loopers through their `Prompts` directories.
+- For inter-looper transport, the helper-based approach is mandatory:
+  - first use the role-specific deterministic helper if one is defined for the current contract/task;
+  - use `create_prompt_file.py` only when no role-specific helper is defined for the current case.
+- For generic delivery through `create_prompt_file.py`:
   - PowerShell: `py "$env:LOOPER_ROOT\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
   - cmd: `py "%LOOPER_ROOT%\create_prompt_file.py" create --inbox "<LooperFolder>\Prompts\Inbox\<SenderID>" --from-file "<LocalReportFile.md>"`
-- Не формируй имя `Prompt_*.md` вручную.
-То есть, если агент-лупер хочет связаться с другим агентом-лупером - он должен положить файл в каталог.
-Если каталога нет - создать его.
-- Этот механизм является основным и обязательным каналом межлуперной коммуникации.
-- Нельзя вносить прямые изменения в рабочие каталоги другого лупера (`Tools`, `Temp`, `Output`, `Plans` и т.п.), кроме записи prompt-файла в его `Prompts/Inbox/<SenderID>/`.
-- Ответ между луперами также передается только новым `Prompt_*.md` в inbox отправителя запроса (по согласованному `Reply-To`).
-- `*_Result.md` другого лупера не является межлуперным транспортом. Это внутренний run-log для наблюдения/диагностики.
-- `create_prompt_file.py` является общим транспортным helper и НЕ заменяет role-specific deterministic helpers.
-- Если для маршрута в активной роли задан специализированный helper (например, project handoff / Reply-To delivery), он имеет приоритет и обязателен.
-- Запрещено понижать маршрут до прямого `create_prompt_file.py`, если required helper определен, даже при "похожем" пути inbox.
-- Выбор helper должен основываться только на активном контракте/типе задачи, а не на эвристике имени sender/folder.
+- Do not handcraft the `Prompt_*.md` filename.
+If an agent looper wants to contact another agent looper, it must place a file into that directory.
+If the directory does not exist, create it.
+- This mechanism is the primary and mandatory inter-looper communication channel.
+- Do not make direct changes inside another looper's working directories (`Tools`, `Temp`, `Output`, `Plans`, etc.), except for writing a prompt file into its `Prompts/Inbox/<SenderID>/`.
+- Replies between loopers must also be delivered only as new `Prompt_*.md` files into the original sender's inbox (according to the agreed `Reply-To`).
+- Another looper's `*_Result.md` is not inter-looper transport. It is an internal run-log for observation/diagnostics.
+- `create_prompt_file.py` is the generic transport helper and does NOT replace role-specific deterministic helpers.
+- If a specialized helper is defined for the route in the active role (for example, project handoff / Reply-To delivery), it has priority and is mandatory.
+- It is forbidden to downgrade a route to direct `create_prompt_file.py` when a required helper is defined, even if the inbox path looks "similar".
+- Helper selection must be based only on the active contract/task type, not on sender/folder name heuristics.
 
 ## Reply-To Routing Contract (Mandatory)
 
-- Считай блок `Reply-To` валидным контрактом маршрутизации, если одновременно выполняются условия:
-  - есть отдельная строка ровно `Reply-To:` (не inline-вставка);
-  - в рамках этого же блока присутствует `- InboxPath:` (порядок остальных полей не важен);
-  - блок не является markdown-примером (не внутри code fence и не цитата);
-  - `InboxPath` не плейсхолдер вида `<...>`.
-- Если есть неоднозначность, считать `Reply-To` невалидным и явно зафиксировать проблему маршрутизации вместо молчаливого reroute.
-- Используй значения `Reply-To` как источник истины: `InboxPath` (куда писать), `SenderID` (если задан), `FilePattern`.
-- Для fail-closed identity-контракта текущей сессии дополнительно требуй top-level блок `Route-Meta`:
+- Treat the `Reply-To` block as a valid routing contract only when all of the following are true:
+  - there is a standalone line exactly `Reply-To:` (not an inline insertion);
+  - the same block contains `- InboxPath:` (field order does not matter);
+  - the block is not a markdown example (not inside a code fence and not a quote);
+  - `InboxPath` is not a placeholder like `<...>`.
+- If there is any ambiguity, treat `Reply-To` as invalid and explicitly record the routing problem instead of silently rerouting.
+- Use `Reply-To` values as the source of truth: `InboxPath` (where to write), `SenderID` (if provided), `FilePattern`.
+- For the fail-closed identity contract of the current session, also require a top-level `Route-Meta` block:
   - `- RouteSessionID: <...>`
   - `- ProjectTag: <...>`
-- Если `Route-Meta` отсутствует/невалиден, блокируй transport и эскалируй upstream.
-- Если во входящем prompt есть `Routing-Contract`, `Route-Meta.RouteSessionID` и `Route-Meta.ProjectTag` обязаны совпадать с ним.
-- Для межлуперного транспорта поддерживается только стандартный pattern:
-  `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md` (допустим суффикс `_suffix`, где `suffix` = `[A-Za-z0-9]+`).
-- Если `Reply-To.FilePattern` отсутствует, используй стандартный pattern.
-- Если `Reply-To.FilePattern` задан и отличается от стандартного pattern, считай маршрут невалидным и зафиксируй ошибку `unsupported FilePattern`.
-- Нельзя подменять путь на "похожий" или "ожидаемый по умолчанию", если явно указан `Reply-To`.
-- Ответ/отчет отправляй только новым `Prompt_*.md` в `Reply-To.InboxPath`; не заменяй это сообщением только в своем `*_Result.md`.
-- Для Reply-To доставки используй deterministic helper `send_reply_to_report.py` (через `LOOPER_ROOT`):
+- If `Route-Meta` is missing/invalid, block transport and escalate upstream.
+- If the incoming prompt contains `Routing-Contract`, `Route-Meta.RouteSessionID` and `Route-Meta.ProjectTag` must match it.
+- Only the standard pattern is supported for inter-looper transport:
+  `Prompt_YYYY_MM_DD_HH_MM_SS_mmm.md` (suffix `_suffix` is allowed, where `suffix` = `[A-Za-z0-9]+`).
+- If `Reply-To.FilePattern` is missing, use the standard pattern.
+- If `Reply-To.FilePattern` is specified and differs from the standard pattern, treat the route as invalid and record an `unsupported FilePattern` error.
+- Do not substitute the path with a "similar" or "expected by default" one if `Reply-To` is explicitly specified.
+- Send the reply/report only as a new `Prompt_*.md` into `Reply-To.InboxPath`; do not replace it with a message only in your own `*_Result.md`.
+- For Reply-To delivery, use the deterministic helper `send_reply_to_report.py` (via `LOOPER_ROOT`):
   - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
   - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
-  - если у агента есть pinned `routing_contract.json`, передавай его явно:
+  - if the agent has a pinned `routing_contract.json`, pass it explicitly:
     - PowerShell: `py "$env:LOOPER_ROOT\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
     - cmd: `py "%LOOPER_ROOT%\send_reply_to_report.py" --incoming-prompt "<IncomingPromptFile.md>" --routing-contract-file "<RoutingContractFile.json>" --report-file "<LocalReportFile.md>" --audit-file "<AuditFilePath>"`
-  - `--audit-file` (обязательный): абсолютный путь к `report_delivery_audit.jsonl` для аудита доставки. Допустимые расположения:
+  - `--audit-file` (mandatory): absolute path to `report_delivery_audit.jsonl` for delivery audit. Allowed locations:
     - Talker: `<AppRoot>\Talker\Temp\report_delivery_audit.jsonl`
     - Orchestrator: `<AgentsRoot>\Orchestrator\Temp\report_delivery_audit.jsonl`
     - Worker: `<AgentsRoot>\Workers\<WorkerId>\Temp\report_delivery_audit.jsonl`
-- `send_reply_to_report.py` обязателен для Reply-To маршрута и выполняет весь транспортный цикл:
+- `send_reply_to_report.py` is mandatory for Reply-To routing and performs the full transport cycle:
   extract/validate `Reply-To` + `Route-Meta` (+ `Routing-Contract` if present) -> preflight scope check -> create prompt via `create_prompt_file.py` -> verify file exists -> retry once.
-- При `Reply-To` не дублируй полный ответ в текущем чате/result: оставляй только краткое подтверждение маршрутизации или сообщение об ошибке доставки.
-- Исключение: relay-механизм Talker (`type: relay`) может содержать verbatim payload в Result по правилам `ROLE_TALKER`.
+- When `Reply-To` is present, do not duplicate the full reply in the current chat/result: keep only a short routing confirmation or a delivery error message.
+- Exception: Talker's relay mechanism (`type: relay`) may contain a verbatim payload in Result according to `ROLE_TALKER`.
 
 ## Message-Meta Contract (Mandatory)
 
-- Все исходящие сообщения (отчеты/трассы) между луперами должны содержать top-level блок метаданных:
+- All outgoing messages (reports/traces) between loopers must contain a top-level metadata block:
   ```text
   Message-Meta:
   - MessageClass: report | trace
@@ -104,18 +104,18 @@ If a final file is created "just in case" and no path is provided, place it in `
   - RouteSessionID: <must match routing contract>
   - ProjectTag: <must match routing contract>
   ```
-- Обязательные события для `MessageClass=report` (должны отправляться через helper, нельзя оставлять только в консоли):
-  1. Phase start gate (если включен).
+- Mandatory events for `MessageClass=report` (must be sent through a helper; console-only is not allowed):
+  1. Phase start gate (if enabled).
   2. Phase accept/rework decision.
   3. Phase done gate (`PASS`/`FAIL`).
   4. Final execution summary.
   5. Blocking question to user (`ReportType=question`).
-- Для `ReportType=phase_accept` действует обязательный семантический gate-контракт:
+- For `ReportType=phase_accept`, the following semantic gate contract is mandatory:
   - `Verdict: ACCEPT | REWORK`
   - `Decision: GO | NO-GO`
-  - каноническая маппинг-пара: `ACCEPT=>GO`, `REWORK=>NO-GO`
-  - несоответствие/пропуск трактуется fail-closed и блокирует доставку отчета.
-- Fail-closed gate: если отправка `report` не подтверждена хелпером (нет `status=ok` и `delivered_file`), текущий turn не считается завершенным. Необходимо остановить процесс и зафиксировать `report_delivery_failed`. Никаких "console-only" отчетов.
-- Сообщения без валидного `Message-Meta` считаются невалидными для отправки.
-- `ReportID` должен быть уникальным для события и стабильным при ретраях для защиты от отправки дубликатов.
-- Эта политика относится только к сообщениям самих агентов (межлуперным), а не к сырому пользовательскому вводу.
+  - canonical mapping pair: `ACCEPT=>GO`, `REWORK=>NO-GO`
+  - mismatch/omission is treated as fail-closed and blocks report delivery.
+- Fail-closed gate: if `report` sending is not confirmed by the helper (no `status=ok` and `delivered_file`), the current turn is not considered complete. Stop the process and record `report_delivery_failed`. No "console-only" reports.
+- Messages without valid `Message-Meta` are invalid for delivery.
+- `ReportID` must be unique for the event and stable across retries to protect against duplicate delivery.
+- This policy applies only to agent-generated messages (inter-looper), not to raw user input.

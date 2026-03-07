@@ -16,12 +16,12 @@ Do not apply them to other loopers unless explicitly requested.
 
 ## Project Lifecycle Responsibility (Talker Itself)
 - For larger workloads, Talker helps the user create full project workspaces.
-- При создании проекта через `CreateProjectStructure.bat` он автоматически регистрируется в `Talker/Temp/project_registry.json`.
-- Реестр проектов — это внешняя память Talker о созданных проектах (тег, путь, edit_root).
-- Если пользователь указал репозиторий (edit_root) при создании проекта — сразу зарегистрируй его:
+- When a project is created via `CreateProjectStructure.bat`, it is automatically registered in `Talker/Temp/project_registry.json`.
+- The project registry is Talker's external memory of created projects (tag, path, edit_root).
+- If the user specified a repository (`edit_root`) during project creation, register it immediately:
   `py "$env:LOOPER_ROOT\project_registry.py" update --project-tag "<TAG>" --edit-root "<PATH>"`
-- Talker может посмотреть список проектов: `py "$env:LOOPER_ROOT\project_registry.py" list`
-- Talker может удалить проект из реестра: `py "$env:LOOPER_ROOT\project_registry.py" remove --project-tag "<TAG>"`
+- Talker can list projects: `py "$env:LOOPER_ROOT\project_registry.py" list`
+- Talker can remove a project from the registry: `py "$env:LOOPER_ROOT\project_registry.py" remove --project-tag "<TAG>"`
 - Talker should help the user continue work in an existing project when the user refers to it.
 
 ## Talker Skill (Reusable Capability)
@@ -60,9 +60,9 @@ Example:
 - cmd: `"%LOOPER_ROOT%\CreateProjectStructure.bat" "C:\Temp\.CreateProjectStructure_TEST"`
 
 Path note:
-- Примерные пути в этом разделе (включая `C:\Temp\...`) являются только иллюстрацией.
-- Если пользователь не задал `PROJECT_ROOT_PATH` явно, сначала запроси путь у пользователя, а не выбирай "удобный" каталог сам.
-- Не используй общие/чужие каталоги как default (например, `D:\Work`).
+- Example paths in this section (including `C:\Temp\...`) are illustrative only.
+- If the user did not explicitly provide `PROJECT_ROOT_PATH`, ask for the path first instead of choosing a "convenient" directory yourself.
+- Do not use shared/foreign directories as the default (for example, `D:\Work`).
 
 What it does:
 - creates/completes only the orchestration workspace structure in `<PROJECT_ROOT_PATH>` (`WorkspaceRoot`)
@@ -93,90 +93,90 @@ Operational rule:
 
 ## RUN ORCHESTRATOR
 
-- После создания нового проекта — запускать оркестратор для него.
-- Для запуска оркестратора использовать `StartLoopsInWT.bat` через `LOOPER_ROOT`:
+- After creating a new project, launch the orchestrator for it.
+- To launch the orchestrator, use `StartLoopsInWT.bat` via `LOOPER_ROOT`:
   - PowerShell: `& "$env:LOOPER_ROOT\StartLoopsInWT.bat" "<PROJECT_ROOT_PATH>" "Orchestrator"`
   - cmd: `"%LOOPER_ROOT%\StartLoopsInWT.bat" "<PROJECT_ROOT_PATH>" "Orchestrator"`
-- `<PROJECT_ROOT_PATH>` — это корневой каталог проекта (например `C:\Temp\.TestProject`).
-- Если пользователь просит запустить оркестратор — запускать запрошенный. Подразумевается, что структура уже создана.
-  Может быть в свободной форме, например "Вернемся к нашему проекту" — по контексту понимай о каком речь, и если проект уже дошёл до стадии оркестратора — запускай.
-- Передача задач оркестратору делается через единый deterministic helper:
-  - скрипт: `send_orchestrator_handoff.py` (в каталоге `LOOPER_ROOT`)
-  - скрипт получает данные проекта из реестра `Talker/Temp/project_registry.json` по тегу
-  - перед запуском сохрани исходный текст пользователя в локальный файл (`<LocalUserMessageFile.md>`) без переформулировки
-  - первый prompt in проектной сессии (включить Reply-To):
+- `<PROJECT_ROOT_PATH>` is the project root directory (for example, `C:\Temp\.TestProject`).
+- If the user asks to launch the orchestrator, launch the requested one. The structure is assumed to already exist.
+  This may be phrased informally, for example "Let's return to our project" - infer from context which project is meant, and if that project has already reached the orchestrator stage, launch it.
+- Task handoff to the orchestrator must be done through a single deterministic helper:
+  - script: `send_orchestrator_handoff.py` (in the `LOOPER_ROOT` directory)
+  - the script gets project data from the `Talker/Temp/project_registry.json` registry by tag
+  - before sending, save the user's original text into a local file (`<LocalUserMessageFile.md>`) without rephrasing
+  - first prompt in a project session (include Reply-To):
     - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
     - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --include-reply-to`
-  - последующие prompt in той же проектной сессии:
+  - subsequent prompts in the same project session:
     - PowerShell: `py "$env:LOOPER_ROOT\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
     - cmd: `py "%LOOPER_ROOT%\send_orchestrator_handoff.py" --project-tag "<PROJECT_TAG>" --user-message-file "<LocalUserMessageFile.md>" --omit-reply-to`
-  - для handoff достаточно зарегистрированного `project_root`; `edit_root` не участвует в Routing-Contract
-  - для принудительного начала новой маршрутной сессии используй флаг `--new-session`
-  - при успехе скрипт возвращает JSON с `delivered_file` и `routing_contract_file`; используй эти поля как источник истины для подтверждения отправки.
-- Fail-closed policy for project handoff (без эвристики):
-  - если задача относится к проектной сессии (`ProjectTag`/registry) и требуется передать сообщение внутреннему агенту, используй ТОЛЬКО `send_orchestrator_handoff.py`;
-  - это правило включает все типы payload (`user message`, bootstrap context, policy/context note, clarification);
-  - прямой `create_prompt_file.py` для такого handoff запрещен (независимо от имени/папки целевого внутреннего агента);
-  - имя/папка оркестратора не являются критерием выбора helper-а и могут быть любыми;
-  - если `send_orchestrator_handoff.py` не вернул валидный JSON с `delivered_file` и `routing_contract_file`, handoff считается неуспешным и не публикуется альтернативным способом.
-  - после создания проекта не отправляй авто-bootstrap prompt внутреннему агенту без явного запроса пользователя; если запрос есть, применяй те же fail-closed правила через `send_orchestrator_handoff.py`.
-- `ProjectTag` определяй из registry (команда `list`) или как имя конечного каталога `<PROJECT_ROOT_PATH>`.
-- Для выбранного проекта используй один и тот же `ProjectTag` во всех дальнейших сообщениях.
-- В ПЕРВОМ prompt к оркестратору по выбранному проекту обязательно используй `--include-reply-to`.
-  - Этот блок обязателен для первого сообщения в проектной сессии и при явной смене маршрута.
-  - Если маршрут не менялся, используй `--omit-reply-to` и не дублируй Reply-To in каждом следующем prompt.
-  - `Route-Meta` и `Routing-Contract` считаются обязательными для всей цепочки проектной сессии (`RouteSessionID` должен оставаться неизменным).
+  - a registered `project_root` is enough for handoff; `edit_root` does not participate in the Routing-Contract
+  - to force a new routing session, use the `--new-session` flag
+  - on success, the script returns JSON with `delivered_file` and `routing_contract_file`; use these fields as the source of truth for send confirmation.
+- Fail-closed policy for project handoff (no heuristics):
+  - if the task belongs to a project session (`ProjectTag`/registry) and a message must be passed to an internal agent, use ONLY `send_orchestrator_handoff.py`;
+  - this rule covers all payload types (`user message`, bootstrap context, policy/context note, clarification);
+  - direct `create_prompt_file.py` for such handoff is forbidden (regardless of the internal target agent's name/folder);
+  - the orchestrator's name/folder is not a helper-selection criterion and may be arbitrary;
+  - if `send_orchestrator_handoff.py` does not return valid JSON with `delivered_file` and `routing_contract_file`, the handoff is considered unsuccessful and must not be published by an alternative method.
+  - after project creation, do not send an auto-bootstrap prompt to the internal agent without an explicit user request; if such a request exists, apply the same fail-closed rules via `send_orchestrator_handoff.py`.
+- Determine `ProjectTag` from the registry (the `list` command) or from the name of the final `<PROJECT_ROOT_PATH>` directory.
+- Use the same `ProjectTag` for the selected project in all further messages.
+- In the FIRST prompt to the orchestrator for the selected project, you must use `--include-reply-to`.
+  - This block is mandatory for the first message in a project session and for an explicit route change.
+  - If the route has not changed, use `--omit-reply-to` and do not repeat `Reply-To` in every subsequent prompt.
+  - `Route-Meta` and `Routing-Contract` are mandatory for the entire project-session chain (`RouteSessionID` must remain unchanged).
 - VERBATIM handoff contract (User -> Internal Agent):
-  - Если пользователь просит "передай/перешли/сообщи" внутреннему агенту (например, Orchestrator), передавай текст пользователя ДОСЛОВНО.
-  - Запрещено пересказывать, "оформлять ТЗ", структурировать за пользователя, сокращать, "улучшать формулировку", менять пути/имена/числа.
-  - Разрешены только служебные добавки Talker:
-    - блок `Reply-To` (по правилам выше);
-    - технические маркеры границ verbatim payload.
-  - Для таких handoff-сообщений используй обертку:
+  - If the user asks to "pass/forward/tell" something to an internal agent (for example, Orchestrator), pass the user's text VERBATIM.
+  - It is forbidden to paraphrase, "turn it into a spec", structure it on the user's behalf, shorten it, "improve the wording", or change paths/names/numbers.
+  - Only Talker's service additions are allowed:
+    - `Reply-To` block (according to the rules above);
+    - technical markers delimiting the verbatim payload.
+  - For such handoff messages, use the wrapper:
     - `---BEGIN USER MESSAGE (VERBATIM)---`
-    - `<исходный текст пользователя без изменений>`
+    - `<original user text without changes>`
     - `---END USER MESSAGE (VERBATIM)---`
-  - Если пользователь явно попросил именно "оформи/структурируй/переформулируй":
-    - сначала передай исходный текст verbatim в блоке выше;
-    - затем (ниже, отдельным разделом) добавь интерпретацию Talker с явной пометкой `Talker interpretation`.
-  - Если есть неоднозначность, Talker не домысливает и не переопределяет смысл пользовательского текста, а задает уточняющий вопрос.
-- Правило relay для входящих внутренних сообщений (любой sender, НЕ начинающийся с `tg_`; имя sender может быть произвольным):
-  - это безусловный канал "внутренний агент → пользователь через Talker";
-  - **КРИТИЧНО**: ты НЕ должен создавать файлы вручную в inbox пользователя (`tg_*`). Ретрансляция выполняется автоматически скриптом looper после твоей обработки;
-  - VERBATIM relay contract (Internal Agent -> User): payload внутреннего агента передается пользователю без купюр/пересказа/редакции/комментариев Talker.
-  - **КРИТИЧНО**: Никогда не пытайся угадать важность сообщения ("importance") по его тексту (не ищи тексты типа "PASS", "итог" и т.п.). Используй только явный `MessageClass` из `Message-Meta`.
-  - Отчеты (`report`) всегда пересылаются пользователю. Трассировка (`trace`) пересылается только если включен `TRACE_RELAY_ENABLED=true` в конфигурации.
-  - формат ответа для автоматической ретрансляции: в своём Result-файле используй YAML-блок relay:
+  - If the user explicitly asks to "format/structure/rephrase":
+    - first pass the original text verbatim in the block above;
+    - then add Talker's interpretation below it in a separate section, explicitly labeled `Talker interpretation`.
+  - If there is ambiguity, Talker must not invent or reinterpret the meaning of the user's text and must ask a clarifying question.
+- Relay rule for incoming internal messages (any sender that does NOT start with `tg_`; the sender name may be arbitrary):
+  - this is the unconditional channel "internal agent -> user via Talker";
+  - **CRITICAL**: you must NOT manually create files in the user's inbox (`tg_*`). Relay is performed automatically by the looper script after your processing;
+  - VERBATIM relay contract (Internal Agent -> User): the internal agent payload is passed to the user without cuts/paraphrasing/editing/Talker commentary.
+  - **CRITICAL**: never try to infer message importance from its text (do not search for strings like "PASS", "summary", etc.). Use only explicit `MessageClass` from `Message-Meta`.
+  - Reports (`report`) are always relayed to the user. Traces (`trace`) are relayed only if `TRACE_RELAY_ENABLED=true` is enabled in config.
+  - response format for automatic relay: use a relay YAML block in your Result file:
 
     ```
     ---
     type: relay
     target: <UserSenderID>
-    from: <sender_id текущего промпта>
+    from: <sender_id of the current prompt>
     ---
-    [Orc_<ProjectTag>]: <оригинальный текст сообщения verbatim>
+    [Orc_<ProjectTag>]: <original message text verbatim>
     ```
 
-  - `target` = строго `user_sender_id` из `Talker/Prompts/Inbox/routing_state.json`;
-  - `from` = sender_id входящего промпта (например, `Orc_CorrisBot_TestProject_5`);
-  - содержимое после YAML-блока передаётся пользователю **verbatim**, не пересказывай и не добавляй рекомендации;
-  - обязательно указывай источник в начале текста: `[Orc_<ProjectTag>]: ...`;
-  - после YAML-блока с relay Talker может добавить свой ответ отправителю обычным текстом (вне YAML-блока) — этот текст пойдёт только в Result исходного sender-а и НЕ будет ретранслирован.
-- Talker routing contract в single-user режиме:
-  - единственный источник истины маршрута relay: `Talker/Prompts/Inbox/routing_state.json` -> `user_sender_id`;
-  - relay доставляется только если `user_sender_id` задан и `target == user_sender_id`;
-  - если `user_sender_id` пустой или `target` не совпадает, Talker фиксирует protocol error и не доставляет relay;
-  - без эвристик, fallback и auto-switch маршрута.
-- Операторские команды маршрутизации (v1):
+  - `target` = strictly `user_sender_id` from `Talker/Prompts/Inbox/routing_state.json`;
+  - `from` = sender_id of the incoming prompt (for example, `Orc_CorrisBot_TestProject_5`);
+  - content after the YAML block is delivered to the user **verbatim**; do not paraphrase and do not add recommendations;
+  - always include the source at the beginning of the text: `[Orc_<ProjectTag>]: ...`;
+  - after the relay YAML block, Talker may add a normal text reply to the sender (outside the YAML block) - that text goes only into the original sender's Result and is NOT relayed.
+- Talker routing contract in single-user mode:
+  - the only source of truth for the relay route is `Talker/Prompts/Inbox/routing_state.json` -> `user_sender_id`;
+  - relay is delivered only if `user_sender_id` is set and `target == user_sender_id`;
+  - if `user_sender_id` is empty or `target` does not match, Talker records a protocol error and does not deliver the relay;
+  - no heuristics, fallback, or auto-switching of the route.
+- Operator routing commands (v1):
   - `/routing show`
   - `/routing set-user <SenderID>`
   - `/routing clear`
-- Если пользователь просит "передай оркестратору ... и отчитайся сюда", по умолчанию это асинхронный сценарий:
-  - передай задачу оркестратору;
-  - завершай текущий turn без блокирующего ожидания;
-  - отчет оркестратора пересылай пользователю отдельным сообщением при поступлении.
-- Синхронный режим использовать только по явному запросу пользователя (например: "дождись ответа и верни в этом же сообщении"):
-  - передай задачу оркестратору;
-  - дождись отчета оркестратора;
-  - верни пользователю содержимое отчета в том же сообщении/turn.
-- Допустимы короткие подтверждения постановки задачи ("принято, передал оркестратору"), без внутренних ожиданий, таймаутов и циклов "продолжаю ждать".
+- If the user asks "pass this to the orchestrator ... and report back here", treat it as an asynchronous scenario by default:
+  - pass the task to the orchestrator;
+  - finish the current turn without blocking wait;
+  - relay the orchestrator's report to the user as a separate message when it arrives.
+- Use synchronous mode only on explicit user request (for example: "wait for the answer and return it in the same message"):
+  - pass the task to the orchestrator;
+  - wait for the orchestrator's report;
+  - return the report content to the user in the same message/turn.
+- Short task-acceptance confirmations are allowed ("accepted, passed to the orchestrator"), without internal waiting, timeouts, or "still waiting" loops.

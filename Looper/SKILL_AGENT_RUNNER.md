@@ -1,106 +1,106 @@
 # SKILL AGENT-RUNNER
 
-> **Для оркестраторов:** Создание Worker — это ОБЯЗАТЕЛЬНЫЙ первый шаг после получения задачи.
-> Оркестратор не имеет права выполнять код самостоятельно. Все задачи реализации делегируются через этот скил.
-> Если задача допускает параллельное выполнение нескольких подзадач — создавай нескольких исполнителей.
-> Для последовательного старта нескольких луперов используй `start_loops_sequential.py` (не ad-hoc набор отдельных команд).
+> **For orchestrators:** Creating a Worker is the MANDATORY first step after receiving a task.
+> The Orchestrator is not allowed to implement code directly. All implementation tasks are delegated through this skill.
+> If the task allows multiple subtasks to run in parallel, create multiple executors.
+> For sequential startup of multiple loopers, use `start_loops_sequential.py` (not an ad-hoc set of separate commands).
 
 Path note:
-- Все пути в примерах этого skill являются демонстрационными.
-- Не используй примерный путь как рабочий default, если он не задан явно в текущем task contract/пользовательском запросе.
-- Для внешних рабочих каталогов следуй `Path Allocation Policy` из `ROLE_LOOPER_BASE`.
+- All paths in this skill's examples are demonstrational.
+- Do not use an example path as the operational default unless it is explicitly assigned in the current task contract/user request.
+- For external working directories, follow the `Path Allocation Policy` from `ROLE_LOOPER_BASE`.
 
-# Создание структуры файлов агента лупера
+# Creating the looper agent file structure
 
-Скрипт создает папку агента **внутри текущего рабочего каталога**.
+The script creates the agent folder **inside the current working directory**.
 
-- Выбираем название агенту (например, `Worker_001` или `Project_Orchestrator`).
-- Сначала создается структура файлов для работы лупера:
-1. Перейдите в папку, где хотите создать каталог для агента (`cd` или `Set-Location`).
-2. Запустите скрипт создания из `%LOOPER_ROOT%`.
+- Choose a name for the agent (for example, `Worker_001` or `Project_Orchestrator`).
+- First, create the file structure for the looper:
+1. Go to the folder where you want to create the agent directory (`cd` or `Set-Location`).
+2. Run the creation script from `%LOOPER_ROOT%`.
 
 Examples:
-- PowerShell (создание в текущей папке):
+- PowerShell (create in the current folder):
   `Set-Location "<ParentDirPath>"; & "$env:LOOPER_ROOT\CreateWorkerStructure.bat" "<AgentFolderName>" "<ExpectedSenderID>"`
 - cmd:
   `cd /d "<ParentDirPath>" && "%LOOPER_ROOT%\CreateWorkerStructure.bat" "<AgentFolderName>" "<ExpectedSenderID>"`
 
-Параметры:
-- `AgentFolderName`: Имя создаваемого каталога (простое имя, не путь).
-- `ExpectedSenderID`: Логический ID отправителя, от которого этот агент будет принимать задания (например, `Talker`, `Orc_Project1`).
-Важно: второй параметр - это логическое имя отправителя (SenderID), а не имя каталога. Оркестратор может быть расположен в каталоге `Orchestrator`, но использовать SenderID `Orc1`.
+Parameters:
+- `AgentFolderName`: name of the folder to create (plain name, not a path).
+- `ExpectedSenderID`: logical sender ID from which this agent will receive tasks (for example, `Talker`, `Orc_Project1`).
+Important: the second parameter is the logical sender name (SenderID), not the folder name. The orchestrator may be located in the `Orchestrator` directory while using SenderID `Orc1`.
 
-# Запуск агента-лупера
-- После создания файловой структуры запускается сам Лупер (как скрипт-терминала + ИИ агент). 
-- Создается через запуск `StartLoopsInWT.bat` через `LOOPER_ROOT`:
+# Launching an agent looper
+- After the file structure is created, launch the looper itself (terminal script + AI agent).
+- Launch it through `StartLoopsInWT.bat` via `LOOPER_ROOT`:
   - PowerShell: `& "$env:LOOPER_ROOT\StartLoopsInWT.bat" "<ProjectRootPath>" "<RelativePathToAgent>"`
   - cmd: `"%LOOPER_ROOT%\StartLoopsInWT.bat" "<ProjectRootPath>" "<RelativePathToAgent>"`
-Первый параметр - это путь до проекта, второй - относительный путь до агента внутри проекта. 
-Проектов в одном приложении может быть много (Пример вымышленный искать не нужно).
-Например, `c:\Minesweeper\.MigrationToIOs`  - Это проект миграции на iOs.
-А может быть `c:\Minesweeper\.UIRefactoring` - это проект рефакторинга.
-- Если нужно запустить несколько луперов, используй deterministic helper:
+The first parameter is the path to the project; the second is the relative path to the agent inside the project.
+There may be many projects in one application (the example is fictional; do not search for it).
+For example, `c:\Minesweeper\.MigrationToIOs` is a project for iOS migration.
+Or `c:\Minesweeper\.UIRefactoring` may be a refactoring project.
+- If multiple loopers must be started, use the deterministic helper:
   - PowerShell: `py "$env:LOOPER_ROOT\start_loops_sequential.py" --project-root "<ProjectRootPath>" "<RelPath1>" "<RelPath2>"`
   - cmd: `py "%LOOPER_ROOT%\start_loops_sequential.py" --project-root "<ProjectRootPath>" "<RelPath1>" "<RelPath2>"`
-- Для smoke/безопасной проверки допускается `--dry-run`:
+- For smoke/safe verification, `--dry-run` is allowed:
   - `py "$env:LOOPER_ROOT\start_loops_sequential.py" --project-root "<ProjectRootPath>" --dry-run "<RelPath1>" "<RelPath2>"`
-- `start_loops_sequential.py` гарантирует последовательный запуск и stop-on-first-error.
-- Параллелизация делается на уровне задач/исполнителей после старта, а не на уровне одновременного старта WT-панелей.
+- `start_loops_sequential.py` guarantees sequential startup and stop-on-first-error.
+- Parallelization happens at the task/executor level after startup, not at the level of simultaneous WT panel startup.
 
-# Выбор CLI-агента (runner)
+# Choosing the CLI agent (runner)
 
-Looper поддерживает два CLI-агента для выполнения задач:
-- **Codex** (OpenAI) — дефолтный агент, используется по умолчанию
-- **Kimi** (Kimi Code CLI) — альтернативный агент
+Looper supports two CLI agents for task execution:
+- **Codex** (OpenAI) - the default agent, used by default
+- **Kimi** (Kimi Code CLI) - an alternative agent
 
-## Профили и профильные операции (Phase 5)
+## Profiles and profile operations (Phase 5)
 
-Источник истины для runner/model/reasoning:
+Source of truth for runner/model/reasoning:
 - `agent_runner.json`
 - `codex_profile.json`
 - `kimi_profile.json`
 - runtime-root registry: `<RuntimeRoot>/AgentRunner/model_registry.json`
   (NOT inside ORCHESTRATOR!! but RuntimeRoot folder!!)
 
-Для setup/update профилей использовать deterministic helper:
+Use the deterministic helper for profile setup/update:
 - `Looper/profile_ops.py`
 
-### Проверка профилей (validate)
+### Validate profiles
 - PowerShell:
   - `py "$env:LOOPER_ROOT\profile_ops.py" validate --agent-dir "<AgentDir>"`
 - cmd:
   - `py "%LOOPER_ROOT%\profile_ops.py" validate --agent-dir "<AgentDir>"`
 
-### Изменение runner
+### Change runner
 - Orchestrator -> Worker:
   - `py "$env:LOOPER_ROOT\profile_ops.py" set-runner --agent-dir "<ProjectRoot>\Workers\Worker_001" --actor-role orchestrator --actor-id "<OrchestratorSenderID>" --request-ref "<RequestRef>" --intent explicit --runner codex`
 - Talker -> Orchestrator/Talker:
   - `py "$env:LOOPER_ROOT\profile_ops.py" set-runner --agent-dir "<ProjectRoot>\Orchestrator" --actor-role talker --actor-id "<TalkerSenderID>" --request-ref "<RequestRef>" --intent explicit --runner kimi`
 
-### Изменение backend model/reasoning
+### Change backend model/reasoning
 - Set model:
   - `py "$env:LOOPER_ROOT\profile_ops.py" set-backend --agent-dir "<AgentDir>" --actor-role orchestrator --actor-id "<OrchestratorSenderID>" --request-ref "<RequestRef>" --intent explicit --backend codex --model codex-5.3-mini`
 - Set Codex reasoning (reasoning may differ: low, medium, high, etc.):
   - `py "$env:LOOPER_ROOT\profile_ops.py" set-backend --agent-dir "<AgentDir>" --actor-role orchestrator --actor-id "<OrchestratorSenderID>" --request-ref "<RequestRef>" --intent explicit --backend codex --reasoning-effort high`
 
-Правила:
-- mutation разрешена только при явном intent (`--intent explicit` + `--request-ref`).
-- helper применяет ownership-check, lock + atomic replace, и пишет audit в `<RuntimeRoot>/AgentRunner/profile_change_audit.jsonl`.
-- ошибки мутации также пишутся в audit с `result=error`.
+Rules:
+- mutation is allowed only with explicit intent (`--intent explicit` + `--request-ref`).
+- the helper performs ownership check, lock + atomic replace, and writes audit records to `<RuntimeRoot>/AgentRunner/profile_change_audit.jsonl`.
+- mutation errors are also written to audit with `result=error`.
 
-## Launch overrides (временные)
+## Launch overrides (temporary)
 
-- Launch path использует per-agent resolver/profile как baseline.
-- CLI overrides (`--runner`, `--model`, `--reasoning-effort`) допустимы как launch/runtime overrides по контракту фаз 3-4.
-- `loops.wt.json` используется только для WT layout/оконных настроек, не как runtime source-of-truth для runner.
-- Legacy fields `runner` / `_runner_help` в `loops.wt.json` удалены в финальном cutover (Phase 7).
+- Launch path uses per-agent resolver/profile as baseline.
+- CLI overrides (`--runner`, `--model`, `--reasoning-effort`) are allowed as launch/runtime overrides under the phase 3-4 contract.
+- `loops.wt.json` is used only for WT layout/window settings, not as the runtime source of truth for runner.
+- Legacy fields `runner` / `_runner_help` in `loops.wt.json` were removed in the final cutover (Phase 7).
 
-## Особенности Kimi Runner
+## Kimi Runner specifics
 
-- Session ID определяется через файловую систему (`~/.kimi/sessions/`)
-- Нет аналога `turn.completed` — процесс завершается по EOF
-- Промпт передаётся через аргумент `-c` (не через stdin)
-- Длинные промпты (>8000 символов) автоматически записываются во временный файл
+- Session ID is determined through the filesystem (`~/.kimi/sessions/`)
+- There is no analogue of `turn.completed` - the process ends on EOF
+- The prompt is passed through the `-c` argument (not through stdin)
+- Long prompts (>8000 characters) are automatically written to a temporary file
 
 ### Stopping an agent looper (graceful)
 

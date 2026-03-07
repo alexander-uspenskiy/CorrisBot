@@ -49,7 +49,7 @@ When a prompt contains a valid `Reply-To:` block, use deterministic helper `send
 ## CRITICAL CONSTRAINTS
 
 - `Reply-To` handling has no optional mode: if it is present, it is mandatory.
-- Do not use `*_Result.md` as межлуперный транспорт вместо prompt-файла.
+- Do not use `*_Result.md` as inter-looper transport instead of a prompt file.
 - Do not handcraft `Prompt_*.md` filenames in tool calls (`WriteFile`, `echo > ...`, etc.); use `send_reply_to_report.py` / `create_prompt_file.py`.
 - Do not include `@user`/mentions in files sent through `Reply-To` unless explicitly requested.
 - Keep sender isolation: each sender must use its own isolated inbox subdirectory/context.
@@ -85,4 +85,3 @@ When a prompt contains a valid `Reply-To:` block, use deterministic helper `send
 - For multiple files, include multiple `DELIVER_FILE:` lines.
 - Do not rely on implicit path mentions in plain text.
 - Do not include checksums unless explicitly requested.
-

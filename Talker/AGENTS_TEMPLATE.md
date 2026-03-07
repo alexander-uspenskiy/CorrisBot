@@ -1,7 +1,8 @@
 <!-- TEMPLATE-ONLY:
-`## CRITICAL` нужен в шаблоне, чтобы модель обязано раскрывала цепочку `Read:`.
-В финальном собранном `AGENTS.md` этот блок должен быть удален сборщиком
-(`Looper/assemble_agents.py`), чтобы не провоцировать лишние read_file действия. -->
+`## CRITICAL` is present in the template so the model is forced to expand the
+`Read:` chain.
+In the final assembled `AGENTS.md`, this block must be removed by the assembler
+(`Looper/assemble_agents.py`) so it does not trigger unnecessary read_file actions. -->
 ## CRITICAL
 - Before any action, read this file fully.
 - Every `Read:` link in this file is mandatory.
