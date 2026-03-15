@@ -10,6 +10,7 @@ Work in the current agent directory and keep its root clean.
 - Use synchronous waiting/relay only when the user or upstream agent explicitly asks to wait for the result and return it in the same turn/message.
 - Never invent synchronous mode on your own. Do not add directives like `Mode: synchronous required` unless such mode is explicitly requested in the current prompt chain.
 - Do not block a turn by polling another looper state (`*_Result.md`, repeated tail/read loops, sleep+recheck cycles, "still waiting" loops).
+- Do not use internet/network resources (no web access, no API calls, no downloads) unless explicitly authorized by the current task.
 - Keep the final answer concise.
 
 Use this structure:
