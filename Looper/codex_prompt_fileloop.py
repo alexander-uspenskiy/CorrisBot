@@ -436,18 +436,11 @@ class LoopRunner:
                     proj_lines.append(f"- AgentsRoot: {routing_contract.get('AgentsRoot', '')}")
             safe_projection = "Transport Context (Read-Only):\n" + "\n".join(proj_lines) + "\n\n"
             
+        # Keep runtime injection minimal — all policy rules live in AGENTS.md.
+        # Only inject per-iteration dynamic values here.
         rules = (
-            "Loop execution rules (strict):\n"
-            "- Process exactly one incoming prompt from this iteration.\n"
-            "- For app launch/close tasks, execute action immediately, then do a quick verification.\n"
-            "- If quick verification is negative or uncertain, wait at least 5 seconds and verify again before concluding failure.\n"
-            "- If still not in expected state after that wait+recheck, do at most one retry and report both attempts.\n"
-            "- For inter-looper messaging, create Prompt_*.md only via helper script using LOOPER_ROOT:\n"
-            "  - PowerShell: `py \"$env:LOOPER_ROOT\\create_prompt_file.py\" create --inbox \"<InboxPath>\" --from-file \"<LocalReportFile.md>\"`.\n"
-            "  - cmd: `py \"%LOOPER_ROOT%\\create_prompt_file.py\" create --inbox \"<InboxPath>\" --from-file \"<LocalReportFile.md>\"`.\n"
-            "- Do not handcraft Prompt_*.md filenames in WriteFile/Shell commands.\n"
+            "Process exactly one incoming prompt. Follow AGENTS.md rules strictly.\n"
             f"{routing_rules}"
-            "- Do not use internet/network resources (no web access, no API calls, no downloads) UNLESS explicitly authorized by the current task.\n\n"
             f"Sender ID: {sender_id}\n\n"
             f"{routing_context}"
             f"{safe_projection}"
